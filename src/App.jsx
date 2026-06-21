@@ -72,6 +72,9 @@ export default function App() {
       const { data, error } = await supabase.auth.signUp({
         email: form.email,
         password: form.password,
+        optiom: {
+          emailRedirectTo: window.location.origin,
+        }
       });
       if (error) { showToast(error.message, "error"); setSubmitting(false); return; }
       if (data.user) {
