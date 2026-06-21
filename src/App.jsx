@@ -22,7 +22,8 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [editId, setEditId] = useState(null);
-  const [imagePreview, setImagePreview] = useState(null);
+  const [images, setImages] = useState([]); // array of base64
+  const [activePhoto, setActivePhoto] = useState(0);
   const [postForm, setPostForm] = useState({
     titre: "", prix: "", devise: "USD", localisation: "", ville: "Fungurume",
     chambres: "", description: "", whatsapp: "", disponible: "true",
@@ -62,6 +63,7 @@ export default function App() {
   function nav(p, id = null) {
     setPage(p);
     setSelectedId(id);
+    setActivePhoto(0);
     window.scrollTo(0, 0);
   }
 
@@ -72,26 +74,16 @@ export default function App() {
       const { data, error } = await supabase.auth.signUp({
         email: form.email,
         password: form.password,
-        optiom: {
-          emailRedirectTo: window.location.origin,
-        }
+        options: { emailRedirectTo: window.location.origin }
       });
       if (error) { showToast(error.message, "error"); setSubmitting(false); return; }
       if (data.user) {
-        await supabase.from("profiles").insert({
-          id: data.user.id,
-          nom: form.nom,
-          whatsapp: form.whatsapp,
-          role: "user",
-        });
-        showToast(`Bienvenue, ${form.nom} ! Vérifiez votre email si nécessaire.`);
+        await supabase.from("profiles").insert({ id: data.user.id, nom: form.nom, whatsapp: form.whatsapp, role: "user" });
+        showToast(`Bienvenue, ${form.nom} !`);
         nav("home");
       }
     } else {
-      const { error } = await supabase.auth.signInWithPassword({
-        email: form.email,
-        password: form.password,
-      });
+      const { error } = await supabase.auth.signInWithPassword({ email: form.email, password: form.password });
       if (error) { showToast("Email ou mot de passe incorrect.", "error"); setSubmitting(false); return; }
       showToast("Connexion réussie !");
       nav("home");
@@ -106,13 +98,20 @@ export default function App() {
     nav("home");
   }
 
-  async function handleImageChange(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    if (file.size > 3 * 1024 * 1024) { showToast("Image trop grande (max 3 Mo).", "error"); return; }
-    const reader = new FileReader();
-    reader.onload = ev => setImagePreview(ev.target.result);
-    reader.readAsDataURL(file);
+  async function handleImagesChange(e) {
+    const files = Array.from(e.target.files);
+    if (files.length + images.length > 6) { showToast("Maximum 6 photos.", "error"); return; }
+    for (const file of files) {
+      if (file.size > 3 * 1024 * 1024) { showToast(`${file.name} trop grande (max 3 Mo).`, "error"); continue; }
+      const reader = new FileReader();
+      reader.onload = ev => setImages(prev => [...prev, ev.target.result]);
+      reader.readAsDataURL(file);
+    }
+  }
+
+  function removeImage(index) {
+    setImages(prev => prev.filter((_, i) => i !== index));
+    if (activePhoto >= index && activePhoto > 0) setActivePhoto(activePhoto - 1);
   }
 
   async function handlePost(e) {
@@ -129,7 +128,8 @@ export default function App() {
       description: postForm.description,
       whatsapp: postForm.whatsapp || profile?.whatsapp || "",
       disponible: postForm.disponible === "true",
-      image_url: imagePreview || null,
+      image_url: images[0] || null,
+      images: JSON.stringify(images),
       owner_id: currentUser.id,
       owner_name: profile?.nom || "Propriétaire",
     };
@@ -145,7 +145,7 @@ export default function App() {
     }
     await fetchListings();
     setPostForm({ titre:"",prix:"",devise:"USD",localisation:"",ville:"Fungurume",chambres:"",description:"",whatsapp:"",disponible:"true" });
-    setImagePreview(null);
+    setImages([]);
     setSubmitting(false);
     nav("listings");
   }
@@ -166,7 +166,7 @@ export default function App() {
       chambres: listing.chambres || "", description: listing.description,
       whatsapp: listing.whatsapp || "", disponible: listing.disponible ? "true" : "false",
     });
-    setImagePreview(listing.image_url || null);
+    try { setImages(JSON.parse(listing.images || "[]")); } catch { setImages(listing.image_url ? [listing.image_url] : []); }
     nav("post");
   }
 
@@ -180,6 +180,7 @@ export default function App() {
   const myListings = listings.filter(l => currentUser && l.owner_id === currentUser.id);
   const detail = listings.find(l => l.id === selectedId);
   const canEdit = detail && currentUser && (detail.owner_id === currentUser.id || profile?.role === "admin");
+  const detailPhotos = (() => { try { return JSON.parse(detail?.images || "[]"); } catch { return detail?.image_url ? [detail.image_url] : []; } })();
 
   const S = {
     root: { fontFamily: "'Segoe UI', system-ui, sans-serif", minHeight: "100vh", background: "#f7f6f2", color: "#1a1a1a" },
@@ -214,9 +215,6 @@ export default function App() {
     label: { display: "block", fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 6 },
     formCard: { background: "#fff", borderRadius: 12, padding: 32, maxWidth: 520, margin: "0 auto", boxShadow: "0 2px 8px rgba(0,0,0,0.08)" },
     submitBtn: { background: "#0d2f6e", color: "#fff", border: "none", borderRadius: 8, padding: "13px 28px", fontSize: 15, fontWeight: 700, cursor: "pointer", width: "100%" },
-    detailImg: { width: "100%", maxHeight: 420, objectFit: "cover", borderRadius: 12 },
-    detailImgPlaceholder: { width: "100%", height: 280, background: "linear-gradient(135deg, #c7d9f7, #e2eaf7)", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 80 },
-    detailBody: { background: "#fff", borderRadius: 12, padding: 28, marginTop: 20, boxShadow: "0 1px 4px rgba(0,0,0,0.08)" },
     whatsappBtn: { display: "flex", alignItems: "center", justifyContent: "center", gap: 10, background: "#25D366", color: "#fff", border: "none", borderRadius: 10, padding: "14px 24px", fontSize: 16, fontWeight: 700, cursor: "pointer", width: "100%", marginTop: 20, textDecoration: "none" },
     toast: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", padding: "12px 24px", borderRadius: 10, fontSize: 14, fontWeight: 600, zIndex: 9999, boxShadow: "0 4px 12px rgba(0,0,0,0.2)" },
     toastSuccess: { background: "#22c55e", color: "#fff" },
@@ -243,7 +241,7 @@ export default function App() {
           {currentUser ? (
             <>
               <button style={S.navBtn} onClick={() => nav("my-listings")}>Mes annonces</button>
-              <button style={S.navBtnPrimary} onClick={() => { setEditId(null); setPostForm({ titre:"",prix:"",devise:"USD",localisation:"",ville:"Fungurume",chambres:"",description:"",whatsapp:"",disponible:"true" }); setImagePreview(null); nav("post"); }}>+ Publier</button>
+              <button style={S.navBtnPrimary} onClick={() => { setEditId(null); setPostForm({ titre:"",prix:"",devise:"USD",localisation:"",ville:"Fungurume",chambres:"",description:"",whatsapp:"",disponible:"true" }); setImages([]); nav("post"); }}>+ Publier</button>
               <button style={S.navBtn} onClick={logout}>Déconnexion</button>
             </>
           ) : (
@@ -255,7 +253,6 @@ export default function App() {
         </div>
       </nav>
 
-      {/* TOAST */}
       {toast && <div style={{ ...S.toast, ...(toast.type === "error" ? S.toastError : S.toastSuccess) }}>{toast.msg}</div>}
 
       {/* HOME */}
@@ -278,9 +275,7 @@ export default function App() {
             </div>
             <h2 style={S.sectionTitle}>Annonces récentes</h2>
             {loading ? <div style={S.spinner}>Chargement...</div> : (
-              <div style={S.grid}>
-                {listings.slice(0, 3).map(l => <ListingCard key={l.id} listing={l} onClick={() => nav("detail", l.id)} S={S} />)}
-              </div>
+              <div style={S.grid}>{listings.slice(0, 3).map(l => <ListingCard key={l.id} listing={l} onClick={() => nav("detail", l.id)} S={S} />)}</div>
             )}
             <div style={{ textAlign: "center", marginTop: 32 }}>
               <button style={S.btnGreen} onClick={() => nav("listings")}>Voir toutes les annonces →</button>
@@ -323,8 +318,25 @@ export default function App() {
       {page === "detail" && detail && (
         <div style={S.section}>
           <button style={S.backBtn} onClick={() => nav("listings")}>← Retour aux annonces</button>
-          {detail.image_url ? <img src={detail.image_url} alt={detail.titre} style={S.detailImg} /> : <div style={S.detailImgPlaceholder}>🏠</div>}
-          <div style={S.detailBody}>
+
+          {/* GALERIE PHOTOS */}
+          {detailPhotos.length > 0 ? (
+            <div>
+              <img src={detailPhotos[activePhoto]} alt={detail.titre} style={{ width: "100%", maxHeight: 420, objectFit: "cover", borderRadius: 12 }} />
+              {detailPhotos.length > 1 && (
+                <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                  {detailPhotos.map((img, i) => (
+                    <img key={i} src={img} alt="" onClick={() => setActivePhoto(i)}
+                      style={{ width: 80, height: 60, objectFit: "cover", borderRadius: 6, cursor: "pointer", border: i === activePhoto ? "3px solid #0d2f6e" : "3px solid transparent", opacity: i === activePhoto ? 1 : 0.7 }} />
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ width: "100%", height: 280, background: "linear-gradient(135deg, #c7d9f7, #e2eaf7)", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 80 }}>🏠</div>
+          )}
+
+          <div style={{ background: "#fff", borderRadius: 12, padding: 28, marginTop: 20, boxShadow: "0 1px 4px rgba(0,0,0,0.08)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
               <div>
                 <h1 style={{ margin: "0 0 8px", fontSize: 24, fontWeight: 800, color: "#0d2f6e" }}>{detail.titre}</h1>
@@ -341,6 +353,7 @@ export default function App() {
               {detail.chambres > 0 && <InfoPill icon="🛏️" label="Chambres" value={detail.chambres} />}
               <InfoPill icon="👤" label="Propriétaire" value={detail.owner_name || "Privé"} />
               <InfoPill icon="📅" label="Publié le" value={detail.created_at?.slice(0, 10)} />
+              {detailPhotos.length > 0 && <InfoPill icon="📷" label="Photos" value={detailPhotos.length} />}
             </div>
             <h3 style={{ fontWeight: 700, color: "#374151", margin: "0 0 8px" }}>Description</h3>
             <p style={{ color: "#555", lineHeight: 1.7, margin: "0 0 20px" }}>{detail.description}</p>
@@ -452,11 +465,26 @@ export default function App() {
                     <label style={S.label}>WhatsApp de contact</label>
                     <input style={S.input} placeholder={profile?.whatsapp || "+243 XXX XXX XXX"} value={postForm.whatsapp} onChange={e => setPostForm(f => ({ ...f, whatsapp: e.target.value }))} />
                   </div>
+
+                  {/* MULTI PHOTOS */}
                   <div style={S.formGroup}>
-                    <label style={S.label}>Photo de la maison</label>
-                    <input type="file" accept="image/*" onChange={handleImageChange} style={{ fontSize: 14 }} />
-                    {imagePreview && <img src={imagePreview} alt="preview" style={{ width: "100%", height: 180, objectFit: "cover", borderRadius: 8, marginTop: 10 }} />}
+                    <label style={S.label}>Photos de la maison (max 6)</label>
+                    <input type="file" accept="image/*" multiple onChange={handleImagesChange} style={{ fontSize: 14 }} />
+                    {images.length > 0 && (
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                        {images.map((img, i) => (
+                          <div key={i} style={{ position: "relative" }}>
+                            <img src={img} alt="" style={{ width: 90, height: 70, objectFit: "cover", borderRadius: 6 }} />
+                            {i === 0 && <span style={{ position: "absolute", top: 2, left: 2, background: "#0d2f6e", color: "#fff", fontSize: 10, padding: "1px 5px", borderRadius: 4 }}>principale</span>}
+                            <button type="button" onClick={() => removeImage(i)}
+                              style={{ position: "absolute", top: 2, right: 2, background: "#ef4444", color: "#fff", border: "none", borderRadius: "50%", width: 18, height: 18, fontSize: 11, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <p style={{ fontSize: 12, color: "#6b7280", margin: "6px 0 0" }}>La première photo sera la photo principale. Max 3 Mo par photo.</p>
                   </div>
+
                   <div style={S.formGroup}>
                     <label style={S.label}>Statut</label>
                     <select style={{ ...S.select, width: "100%" }} value={postForm.disponible} onChange={e => setPostForm(f => ({ ...f, disponible: e.target.value }))}>
@@ -498,9 +526,12 @@ export default function App() {
 }
 
 function ListingCard({ listing, onClick, S }) {
+  const photos = (() => { try { return JSON.parse(listing.images || "[]"); } catch { return listing.image_url ? [listing.image_url] : []; } })();
+  const mainPhoto = photos[0] || listing.image_url;
   return (
     <div style={S.card} onClick={onClick}>
-      {listing.image_url ? <img src={listing.image_url} alt={listing.titre} style={S.cardImg} /> : <div style={S.cardImgPlaceholder}>🏠</div>}
+      {mainPhoto ? <img src={mainPhoto} alt={listing.titre} style={S.cardImg} /> : <div style={S.cardImgPlaceholder}>🏠</div>}
+      {photos.length > 1 && <div style={{ background: "#0d2f6e", color: "#fff", fontSize: 11, padding: "2px 8px", display: "inline-block", marginLeft: 12, marginTop: -8, borderRadius: 10, position: "relative", zIndex: 1 }}>📷 {photos.length} photos</div>}
       <div style={S.cardBody}>
         <h3 style={S.cardTitle}>{listing.titre}</h3>
         <p style={S.cardMeta}>📍 {listing.ville}</p>
