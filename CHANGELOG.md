@@ -2,7 +2,7 @@
 
 Newest first. Written for Junior: what changed for visitors and owners.
 
-## 2026-10-12 — Fast photos (preview, not live yet)
+## 2026-10-12 — Fast photos (live)
 - New photos are now made smaller on the phone before they are sent: a 2 MB phone photo becomes about 70–200 KB, with no visible loss on a phone screen. Pages with photos will load many times faster, even on a slow connection.
 - Photos are now kept in Supabase Storage (a photo store) instead of inside the listing itself. The listing only keeps a link to each photo.
 - Only real photos are accepted (JPG, PNG, WebP, and iPhone photos). A PDF, a video, a very big file (over 20 MB) or a broken file now gets a clear message in French.
@@ -10,7 +10,8 @@ Newest first. Written for Junior: what changed for visitors and owners.
 - If the internet cuts during sending, nothing is saved halfway: the listing is not published, the form keeps everything, and you can simply try again.
 - When you remove a photo from a listing, or delete a listing, its photo files are deleted too.
 - Fixed: the first listing ("Maison 2 chambres") showed no photo on its own page. Editing it could also erase its photo. Both work now.
-- Still to do after Junior's yes: move the photos of the 3 existing listings to the new photo store (tested, ready to run, and can be undone).
+- Junior tested it on an iPhone on the preview, then it went live.
+- The 5 photos of the 2 existing listings were moved to the photo store and shrunk (9.1 MB → 448 KB in total). The listings page now downloads 3 KB of listing data instead of 15.4 MB. The old photos are kept in a private backup for a few weeks, and the move can be undone.
 
 ## 2026-10-12 — New way of working
 - New `ROADMAP.md`: the full plan in 4 phases (fast and good-looking → getting known → making money → international).

@@ -13,8 +13,10 @@ Rental listing platform for Fungurume (Katanga, DRC), expanding to other Congole
 - Every other branch gets its own preview site at `https://<branch>--immocongo-jandj.netlify.app` (Netlify branch deploys). Previews and the live site share the same Supabase database.
 
 ## Database (public schema)
-- `listings` — titre, prix, devise, localisation, ville, chambres, description, whatsapp, disponible, image_url, images (JSON string of base64 photos, max 6), owner_id, owner_name, views, created_at
-- `profiles` — id (= auth user id), nom, whatsapp, role (`user` | `admin`), verified, created_at
+- `listings` — titre, prix, devise, localisation, ville, chambres, description, whatsapp, disponible, image_url (first photo), images (JSON string: array of photo URLs, max 6), owner_id (→ `profiles.id`), owner_name, views, created_at
+- Photos: public Storage bucket `listing-photos`, files under `<owner uid>/` (users can only write their own folder). Shrunk on the device before upload (`src/photos.js`). Old rows could hold base64 data URLs; `listingPhotos()` in `src/photos.js` reads both formats. All existing rows were moved to Storage on 2026-10-12.
+- `listing_photos_backup` — temporary private backup of the old base64 photos (RLS on, no policies). Undo SQL is in `supabase/one-off/20261012_photo_migration.sql`. Drop after 2026-11-09 if all is well.
+- `profiles` — id (= auth user id), nom, whatsapp, role (`user` | `admin`), verified, created_at. A user without a profile row can't publish (foreign key on `listings.owner_id`).
 - `favorites`, `reviews`, `conversations`, `messages` — see `supabase_migration.sql`
 - RPC `increment_views(p_id)`; Realtime enabled on `messages`
 - All schema changes go in a new file under `supabase/migrations/` (create the folder if missing) AND get applied to the database. Keep `supabase_migration.sql` as the historical baseline.

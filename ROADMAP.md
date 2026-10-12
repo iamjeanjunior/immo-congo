@@ -21,7 +21,9 @@ The best real-estate website, starting in Fungurume and Katanga, then all of DR 
 
 ## Phase 1 — Fast, good-looking, works well (now)
 - [x] Phone layout: nothing overlaps on small screens (2026-10-12)
-- [~] **Fast photos:** move photos out of the database into Supabase Storage (bucket `listing-photos`), shrink them on the phone before upload, accept only real image files. Today 3 listings = 15 MB, 23–35 seconds to load.
+- [x] **Fast photos:** photos moved out of the database into Supabase Storage (bucket `listing-photos`), shrunk on the phone before upload, only real image files accepted. Listings data went from 15.4 MB to 3 KB. (2026-10-12)
+- [ ] **Fix: accounts without a profile can't publish.** They get a vague "Erreur lors de la publication" (the database requires a `profiles` row). Create the profile automatically (database trigger on signup, plus a backfill for existing accounts), and show a clear French message if it's still missing. Found while testing on 2026-10-12.
+- [ ] **Fix: an admin editing someone else's listing becomes its owner.** `handlePost` in `src/App.jsx` sends `owner_id` / `owner_name` on update; don't send them when editing.
 - [ ] **Browse without an account:** check that a visitor can see every listing and listing page without logging in; ask for login only to favourite, review, message or publish, with a clear French message explaining why.
 - [ ] **Design refresh:** home page, listing cards and listing page look modern and trustworthy (good photos first, clear price, town and neighbourhood, verified owner badge).
 - [ ] **Split `src/App.jsx`** (~1,260 lines) into smaller files (pages and components). Needed before several agents can work on the code at the same time.
@@ -56,6 +58,10 @@ Start charging only once there are enough listings and visitors. Prices to decid
 ---
 
 ## Ideas / later
+- 🧑 Decide what to do with Junior's second login account (no profile): delete it, or give it a profile.
+- 🧑 Delete the leftover "migrate-listing-photos" Edge Function in the Supabase dashboard (it's already switched off).
+- After 2026-11-09, if all is well: drop the temporary table `listing_photos_backup` (backup of the old photos).
+- Admin rule to delete other users' photo files (today, when an admin deletes someone's listing, its photo files stay in Storage).
 - Report a fake or already-rented listing.
 - Owner phone verification.
 - Map view of all listings.
