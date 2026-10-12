@@ -8,6 +8,8 @@ Rental listing platform for Fungurume (Katanga, DRC), expanding to other Congole
 
 ## Stack
 - React 19 + Vite 8, single-page app. Almost everything is in `src/App.jsx` (inline style object `S`, hash routing via `parseRoute()` / `routeHash()` / `nav()`).
+- Look (design refresh, 2026-10): colours in the `C` object in `App.jsx` (navy `#0d2f6e` text/titles, green `#15803d` main buttons, white + light grey `#f5f7fa`). `src/index.css` holds what inline styles can't do (hover/focus states, animations, the hero drawing `src/assets/hero-katanga.svg`, the swipe gallery). System font stack, no web font. Icons: `src/Icon.jsx` (no emojis in buttons). Breakpoints: `isMobile` ≤640px, `isNarrow` ≤900px.
+- **Never use `window.confirm()` / `alert()` / `prompt()`**: use `await askConfirm({ title, message, confirmLabel, danger })` (renders `src/ConfirmDialog.jsx`). The e2e `page` fixture fails any test where a native dialog opens.
 - Supabase: auth + Postgres. Client is created in `App.jsx` from `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` in `.env`.
 - Netlify auto-deploys every push to `main`. **Pushing to `main` = going live.**
 - Every other branch gets its own preview site at `https://<branch>--immocongo-jandj.netlify.app` (Netlify branch deploys). Previews and the live site share the same Supabase database.

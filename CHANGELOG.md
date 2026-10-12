@@ -2,6 +2,22 @@
 
 Newest first. Written for Junior: what changed for visitors and owners.
 
+## 2026-10-12 — Design refresh (preview, waiting for Junior's yes)
+- **A new, cleaner look for the whole site**, in the "clean & airy" style Junior chose: white pages, big photos, rounded corners, lots of space. The navy + green colours and the Immo**Congo** logo stay: navy for titles and text, green for the main buttons.
+- **Home page:** it now opens with a big search over a drawing of Katanga houses at dusk. You choose the town, the maximum price and the number of rooms, tap "Rechercher", and you land directly on the matching listings. Below: a short strip with the number of listings, towns and verified owners, the latest listings, "Comment ça marche ?" in 3 steps, an invitation for landlords to publish for free, and a footer with the WhatsApp contact (now on every page).
+- The home page drawing is very light (about 3 KB, no photo to download), so it shows fast even on slow connections.
+- **Listing cards:** the photo comes first (same shape for all), the price is big, then the title, town and neighbourhood, rooms, and a green "Vérifié" badge when the owner is verified. The heart (favourite) is on the photo. Photos load only when you scroll to them.
+- **Listing page:** on phones you swipe from photo to photo (with "1 / 3"); on computers there are arrows and small photos underneath. The information (town, rooms, date, photos, views) is in a tidy grid, and the owner has a card with the "Propriétaire vérifié" badge. On phones, a bar stays at the bottom of the screen with **WhatsApp** and **Message**, so contacting the owner is always one tap away. On computers, the price and contact buttons stay on the right while you scroll.
+- **Listings page:** a search box and clear filters with their names (town, rooms, status, sort, price). On phones the filters fold away behind a "Filtres" button, so the listings show sooner. New: a "Chambres" filter (1 or more, 2 or more...) and an "Effacer les filtres" button.
+- **Forms** (publish, login, signup): every field has its name above it, bigger fields and buttons that are easy to tap. The publish form is in 3 parts (the house, photos, contact) with a big "Ajouter des photos" box. Login and signup errors now show in red inside the form, in French (for example "Un compte existe déjà avec cet email. Connectez-vous." instead of an English message).
+- **Menu, favourites, Mes annonces, messages, chat and admin** have the same look. The chat shows who you are talking to and the time of each message, and it scrolls to the newest message by itself.
+- **No more grey browser pop-up.** Deleting a listing (or, for the admin, a review) now asks in the site's own window, in French: "Supprimer cette annonce ?" with "Annuler" and a red "Supprimer" button. Tapping outside the window or pressing Esc cancels.
+- Emojis in buttons and menus were replaced by simple drawn icons that look the same on every phone. The browser tab shows a small ImmoCongo house icon instead of the old purple one.
+- **Faster:** the site no longer downloads a special font from Google; phones use their own system font (on iPhone, Apple's font). Prices are written the French way (1 200).
+- Also checked on tablets (768 px): the listing page goes into one column there.
+- Nothing changed in the database, and listings, accounts, messages and favourites work as before.
+- Automatic tests: 54 passed (6 new: the new delete window, the home search, French signup errors, field and button sizes on phones). The tests now also fail if the browser's own pop-up ever opens again.
+
 ## 2026-10-12 — Trust fixes (live)
 - **Real names only.** The owner's name on a listing and the name on a review now always come from the person's own account. Before, someone with technical knowledge could publish a listing or a review under another name (for example "Admin"). Now the database writes the real name itself, whatever the phone sends. When an admin edits someone's listing, the owner's name stays.
 - **Name changes follow everywhere.** If a person changes their name, their listings, reviews and conversations show the new name too.
