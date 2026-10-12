@@ -58,7 +58,7 @@ test("visiteur : page d'une annonce @desktop", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Connexion" })).toBeVisible();
 });
 
-test("visiteur : les pages réservées demandent de se connecter", async ({ page }) => {
+test("visiteur : les pages réservées demandent de se connecter @desktop", async ({ page }) => {
   await open(page, "post");
   await expect(page.getByText("Vous devez être connecté pour publier.")).toBeVisible();
   await open(page, "favorites");
@@ -66,7 +66,10 @@ test("visiteur : les pages réservées demandent de se connecter", async ({ page
   await open(page, "messages");
   await expect(page.getByText("Connectez-vous pour voir vos messages.")).toBeVisible();
   await open(page, "my-listings");
-  await expect(page.getByText("Vous n'avez pas encore d'annonces.")).toBeVisible(); // no login prompt here today
+  await expect(page.getByText("Connectez-vous pour voir vos annonces.")).toBeVisible();
+  await expect(page.getByText("Vous n'avez pas encore d'annonces.")).toHaveCount(0);
+  await page.getByRole("button", { name: "Se connecter" }).click();
+  await expect(page.getByRole("heading", { name: "Connexion" })).toBeVisible();
   await open(page, "admin");
   await expect(page.getByText("Accès réservé aux administrateurs.")).toBeVisible();
 

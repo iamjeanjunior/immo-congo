@@ -23,7 +23,7 @@ test("pas de défilement horizontal à 375px sur les pages principales", async (
   await client.from("messages").insert({ conversation_id: conv.id, sender_id: buyer.id, content: LONG_LINK });
 
   // Visitor pages.
-  for (const route of ["", "listings", `listing/${listing.id}`, "auth"]) {
+  for (const route of ["", "listings", `listing/${listing.id}`, "auth", "my-listings"]) {
     await open(page, route);
     await expect(page.locator("nav")).toBeVisible();
     await page.waitForLoadState("networkidle");

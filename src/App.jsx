@@ -1198,7 +1198,9 @@ export default function App() {
       {page === "my-listings" && (
         <div style={S.section}>
           <h2 style={S.sectionTitle}>Mes annonces</h2>
-          {myListings.length === 0
+          {!currentUser
+            ? <div style={S.emptyState}><p style={{ fontSize: 40 }}>🔒</p><p>Connectez-vous pour voir vos annonces.</p><button style={S.btnGreen} onClick={() => nav("auth")}>Se connecter</button></div>
+            : myListings.length === 0
             ? <div style={S.emptyState}><p style={{ fontSize: 40 }}>📋</p><p>Vous n'avez pas encore d'annonces.</p><button style={S.btnGreen} onClick={() => nav("post")}>Publier ma première annonce</button></div>
             : <div style={S.grid}>{myListings.map(l => (
               <div key={l.id} style={{ ...S.card, cursor: "default" }}>
