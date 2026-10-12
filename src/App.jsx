@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback, useSyncExternalStore } from "react";
 import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
@@ -29,6 +29,16 @@ function routeHash(page, id) {
   if (page === "chat") return `#/chat/${id}`;
   if (page === "home") return "#/";
   return `#/${page}`;
+}
+
+// True while the CSS media query matches (re-renders when the screen size changes).
+function useMediaQuery(query) {
+  const subscribe = useCallback(onChange => {
+    const mq = window.matchMedia(query);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, [query]);
+  return useSyncExternalStore(subscribe, () => window.matchMedia(query).matches);
 }
 
 export default function App() {
@@ -69,6 +79,9 @@ export default function App() {
   const viewedRef = useRef(new Set());
 
   const isAdmin = profile?.role === "admin";
+  const isMobile = useMediaQuery("(max-width: 640px)");
+  // Logged-in users have up to 7 menu links (~860px), so they get the ☰ menu on tablets too.
+  const compactNav = useMediaQuery(currentUser ? "(max-width: 960px)" : "(max-width: 640px)");
 
   // ---------- auth + listings bootstrap ----------
   useEffect(() => {
@@ -558,19 +571,23 @@ export default function App() {
   const relatedListings = detail ? listings.filter(l => l.id !== detail.id && l.ville === detail.ville).slice(0, 3) : [];
 
   const S = {
-    root: { fontFamily: "'Inter', 'Segoe UI', system-ui, sans-serif", minHeight: "100vh", background: "#f7f6f2", color: "#1a1a1a" },
-    nav: { background: "#0d2f6e", padding: "0 20px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 60, position: "sticky", top: 0, zIndex: 100 },
-    logo: { color: "#fff", fontWeight: 700, fontSize: 18, cursor: "pointer" },
+    root: { fontFamily: "'Inter', 'Segoe UI', system-ui, sans-serif", minHeight: "100vh", background: "#f7f6f2", color: "#1a1a1a", overflowWrap: "break-word" },
+    nav: { background: "#0d2f6e", padding: isMobile ? "0 16px" : "0 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, height: 60, position: "sticky", top: 0, zIndex: 100 },
+    logo: { color: "#fff", fontWeight: 700, fontSize: 18, cursor: "pointer", flexShrink: 0, whiteSpace: "nowrap" },
     logoSpan: { color: "#4ade80" },
-    navBtn: { background: "none", border: "none", color: "#c7d9f7", fontSize: 14, cursor: "pointer", padding: "6px 10px", borderRadius: 6 },
-    navBtnPrimary: { background: "#22c55e", border: "none", color: "#fff", fontSize: 14, cursor: "pointer", padding: "6px 14px", borderRadius: 6, fontWeight: 600 },
+    navLinks: { display: "flex", gap: 8, alignItems: "center" },
+    navLinksMobile: { position: "fixed", top: 60, left: 0, right: 0, background: "#0d2f6e", display: "flex", flexDirection: "column", alignItems: "stretch", gap: 6, padding: "12px 20px 20px", boxShadow: "0 4px 10px rgba(0,0,0,0.2)", maxHeight: "calc(100vh - 60px)", overflowY: "auto", boxSizing: "border-box" },
+    burger: { background: "none", border: "none", color: "#fff", fontSize: 26, cursor: "pointer", lineHeight: 1, padding: "4px 6px" },
+    navBtn: { background: "none", border: "none", color: "#c7d9f7", fontSize: 14, cursor: "pointer", padding: "6px 10px", borderRadius: 6, whiteSpace: "nowrap" },
+    navBtnPrimary: { background: "#22c55e", border: "none", color: "#fff", fontSize: 14, cursor: "pointer", padding: "6px 14px", borderRadius: 6, fontWeight: 600, whiteSpace: "nowrap" },
     hero: { background: "linear-gradient(135deg, #0d2f6e 0%, #1e4db7 60%, #0ea5e9 100%)", color: "#fff", padding: "clamp(48px, 10vw, 80px) 20px clamp(36px, 8vw, 60px)", textAlign: "center" },
     heroTitle: { fontSize: "clamp(26px, 6vw, 36px)", fontWeight: 800, margin: "0 0 12px", lineHeight: 1.15 },
     heroSub: { fontSize: "clamp(14px, 3vw, 17px)", opacity: 0.85, margin: "0 0 32px" },
     btnGreen: { background: "#22c55e", color: "#fff", border: "none", borderRadius: 8, padding: "13px 28px", fontSize: 15, fontWeight: 700, cursor: "pointer" },
     btnOutline: { background: "transparent", color: "#fff", border: "2px solid rgba(255,255,255,0.6)", borderRadius: 8, padding: "13px 28px", fontSize: 15, fontWeight: 600, cursor: "pointer" },
     btnOutlineDark: { background: "#fff", color: "#0d2f6e", border: "2px solid #0d2f6e", borderRadius: 8, padding: "12px 26px", fontSize: 14, fontWeight: 700, cursor: "pointer" },
-    section: { maxWidth: 1100, margin: "0 auto", padding: "40px 20px" },
+    section: { maxWidth: 1100, margin: "0 auto", padding: isMobile ? "24px 16px" : "40px 20px" },
+    panel: { background: "#fff", borderRadius: 12, padding: isMobile ? 18 : 28, boxShadow: "0 1px 4px rgba(0,0,0,0.08)" },
     sectionTitle: { fontSize: 22, fontWeight: 700, margin: "0 0 24px", color: "#0d2f6e" },
     grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 20 },
     card: { background: "#fff", borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,0.08)", cursor: "pointer" },
@@ -583,16 +600,22 @@ export default function App() {
     badgeGreen: { background: "#dcfce7", color: "#166534" },
     badgeRed: { background: "#fee2e2", color: "#991b1b" },
     price: { fontSize: 19, fontWeight: 800, color: "#0d2f6e", margin: "8px 0 0" },
-    filterBar: { background: "#fff", padding: "16px 20px", borderBottom: "1px solid #e5e7eb", display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" },
-    select: { padding: "8px 12px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: 14, background: "#fff", cursor: "pointer" },
-    input: { padding: "10px 14px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: 15, width: "100%", boxSizing: "border-box", fontFamily: "inherit" },
-    textarea: { padding: "10px 14px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: 15, width: "100%", boxSizing: "border-box", minHeight: 100, fontFamily: "inherit", resize: "vertical" },
+    // On phones the filters become a neat 2-column grid (see filterFull / filterHalf).
+    filterBar: isMobile
+      ? { background: "#fff", padding: "14px 16px", borderBottom: "1px solid #e5e7eb", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, alignItems: "center" }
+      : { background: "#fff", padding: "16px 20px", borderBottom: "1px solid #e5e7eb", display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" },
+    filterFull: isMobile ? { gridColumn: "1 / -1", width: "100%", minWidth: 0, boxSizing: "border-box" } : {},
+    filterHalf: isMobile ? { width: "100%", minWidth: 0, boxSizing: "border-box" } : {},
+    // 16px on phones stops iPhones from zooming the page when a field is tapped.
+    select: { padding: "8px 12px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: isMobile ? 16 : 14, background: "#fff", cursor: "pointer" },
+    input: { padding: "10px 14px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: isMobile ? 16 : 15, width: "100%", boxSizing: "border-box", fontFamily: "inherit" },
+    textarea: { padding: "10px 14px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: isMobile ? 16 : 15, width: "100%", boxSizing: "border-box", minHeight: 100, fontFamily: "inherit", resize: "vertical" },
     formGroup: { marginBottom: 16 },
     label: { display: "block", fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 6 },
-    formCard: { background: "#fff", borderRadius: 12, padding: 32, maxWidth: 520, margin: "0 auto", boxShadow: "0 2px 8px rgba(0,0,0,0.08)" },
+    formCard: { background: "#fff", borderRadius: 12, padding: isMobile ? 20 : 32, maxWidth: 520, margin: "0 auto", boxShadow: "0 2px 8px rgba(0,0,0,0.08)" },
     submitBtn: { background: "#0d2f6e", color: "#fff", border: "none", borderRadius: 8, padding: "13px 28px", fontSize: 15, fontWeight: 700, cursor: "pointer", width: "100%" },
-    whatsappBtn: { display: "flex", alignItems: "center", justifyContent: "center", gap: 10, background: "#25D366", color: "#fff", border: "none", borderRadius: 10, padding: "14px 24px", fontSize: 16, fontWeight: 700, cursor: "pointer", width: "100%", marginTop: 20, textDecoration: "none" },
-    toast: { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", padding: "12px 24px", borderRadius: 10, fontSize: 14, fontWeight: 600, zIndex: 9999, boxShadow: "0 4px 12px rgba(0,0,0,0.2)" },
+    whatsappBtn: { display: "flex", alignItems: "center", justifyContent: "center", gap: 10, background: "#25D366", color: "#fff", border: "none", borderRadius: 10, padding: "14px 24px", fontSize: 16, fontWeight: 700, cursor: "pointer", width: "100%", boxSizing: "border-box", marginTop: 20, textDecoration: "none" },
+    toast: { position: "fixed", bottom: 24, left: 16, right: 16, margin: "0 auto", width: "fit-content", maxWidth: 560, textAlign: "center", padding: "12px 24px", borderRadius: 10, fontSize: 14, fontWeight: 600, zIndex: 9999, boxShadow: "0 4px 12px rgba(0,0,0,0.2)" },
     toastSuccess: { background: "#22c55e", color: "#fff" },
     toastError: { background: "#ef4444", color: "#fff" },
     emptyState: { textAlign: "center", padding: "60px 20px", color: "#6b7280" },
@@ -600,8 +623,8 @@ export default function App() {
     row: { display: "flex", gap: 12 },
     dangerBtn: { background: "#fee2e2", color: "#991b1b", border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer" },
     editBtn: { background: "#e0f2fe", color: "#0369a1", border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer" },
-    statsBar: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 32 },
-    statCard: { background: "#fff", borderRadius: 10, padding: 16, textAlign: "center", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" },
+    statsBar: { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: isMobile ? 8 : 12, marginBottom: 32 },
+    statCard: { background: "#fff", borderRadius: 10, padding: isMobile ? "14px 6px" : 16, textAlign: "center", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" },
     statNum: { fontSize: 28, fontWeight: 800, color: "#0d2f6e" },
     statLabel: { fontSize: 12, color: "#6b7280", marginTop: 4 },
     spinner: { textAlign: "center", padding: "80px 20px", color: "#6b7280", fontSize: 16 },
@@ -609,15 +632,17 @@ export default function App() {
     heartBtnActive: { color: "#ef4444" },
     photoCountBadge: { position: "absolute", bottom: 10, left: 10, background: "rgba(13,47,110,0.85)", color: "#fff", fontSize: 11, padding: "2px 8px", borderRadius: 10 },
     reviewCard: { padding: "12px 0", borderBottom: "1px solid #f0f0f0" },
-    convRow: { background: "#fff", borderRadius: 10, padding: "14px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" },
-    chatBox: { background: "#fff", borderRadius: 12, padding: 20, boxShadow: "0 1px 4px rgba(0,0,0,0.08)", maxWidth: 640, margin: "0 auto" },
+    convRow: { background: "#fff", borderRadius: 10, padding: "14px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, cursor: "pointer", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" },
+    chatBox: { background: "#fff", borderRadius: 12, padding: isMobile ? 14 : 20, boxShadow: "0 1px 4px rgba(0,0,0,0.08)", maxWidth: 640, margin: "0 auto" },
     chatMessages: { display: "flex", flexDirection: "column", gap: 8, maxHeight: 420, overflowY: "auto", padding: "4px 2px" },
-    chatBubble: { maxWidth: "75%", padding: "10px 14px", borderRadius: 14, fontSize: 14, lineHeight: 1.4 },
+    chatBubble: { maxWidth: "75%", padding: "10px 14px", borderRadius: 14, fontSize: 14, lineHeight: 1.4, overflowWrap: "anywhere" },
     chatBubbleMine: { alignSelf: "flex-end", background: "#0d2f6e", color: "#fff", borderBottomRightRadius: 4 },
     chatBubbleTheirs: { alignSelf: "flex-start", background: "#f1f5f9", color: "#1a1a1a", borderBottomLeftRadius: 4 },
-    adminTabBtn: { background: "#fff", border: "1px solid #d1d5db", color: "#374151", borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer" },
-    adminTabActive: { background: "#0d2f6e", border: "1px solid #0d2f6e", color: "#fff", borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer" },
+    adminTabBtn: { background: "#fff", border: "1px solid #d1d5db", color: "#374151", borderRadius: 8, padding: isMobile ? "8px 12px" : "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer" },
+    adminTabActive: { background: "#0d2f6e", border: "1px solid #0d2f6e", color: "#fff", borderRadius: 8, padding: isMobile ? "8px 12px" : "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer" },
     adminRow: { background: "#fff", borderRadius: 10, padding: "14px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", boxShadow: "0 1px 3px rgba(0,0,0,0.06)", flexWrap: "wrap", gap: 10 },
+    adminRowText: { flex: "1 1 160px", minWidth: 0 },
+    adminRowActions: { display: "flex", gap: 8, flexShrink: 0 },
     skeletonImg: { width: "100%", height: 190, background: "linear-gradient(90deg, #e5e7eb 25%, #f3f4f6 50%, #e5e7eb 75%)", backgroundSize: "200% 100%", animation: "shimmer 1.4s infinite" },
     skeletonLine: { height: 12, background: "linear-gradient(90deg, #e5e7eb 25%, #f3f4f6 50%, #e5e7eb 75%)", backgroundSize: "200% 100%", animation: "shimmer 1.4s infinite", borderRadius: 4, margin: "8px 0" },
   };
@@ -631,55 +656,42 @@ export default function App() {
         button:active { transform: scale(0.97); }
         .listing-card { transition: transform 0.15s ease, box-shadow 0.15s ease; animation: fadeIn 0.3s ease; }
         .listing-card:hover { transform: translateY(-3px); box-shadow: 0 6px 16px rgba(13,47,110,0.12); }
-        @media (max-width: 640px) {
-          .burger-btn { display: block !important; }
-          .nav-links {
-            display: none;
-            position: fixed;
-            top: 60px;
-            left: 0;
-            right: 0;
-            background: #0d2f6e;
-            flex-direction: column !important;
-            align-items: stretch !important;
-            padding: 12px 20px 20px;
-            gap: 6px !important;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
-          }
-          .nav-links.open { display: flex; }
-          .nav-links button { text-align: left; width: 100%; }
-        }
+        .nav-menu-mobile button { text-align: left; width: 100%; }
       `}</style>
 
-      {/* NAV */}
+      {/* NAV — on small screens the links only show when the ☰ menu is open */}
       <nav style={S.nav}>
         <span style={S.logo} onClick={() => nav("home")}>Immo<span style={S.logoSpan}>Congo</span></span>
-        <button
-          className="burger-btn"
-          aria-label="Ouvrir le menu"
-          onClick={() => setMenuOpen(o => !o)}
-          style={{ display: "none", background: "none", border: "none", color: "#fff", fontSize: 26, cursor: "pointer", lineHeight: 1, padding: "4px 6px" }}
-        >
-          {menuOpen ? "✕" : "☰"}
-        </button>
-        <div className={`nav-links${menuOpen ? " open" : ""}`} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <button style={S.navBtn} onClick={() => nav("listings")}>Annonces</button>
-          {currentUser && <button style={S.navBtn} onClick={() => nav("favorites")}>♥ Favoris</button>}
-          {currentUser && <button style={S.navBtn} onClick={() => nav("messages")}>💬 Messages</button>}
-          {isAdmin && <button style={S.navBtn} onClick={() => nav("admin")}>⚙️ Admin</button>}
-          {currentUser ? (
-            <>
-              <button style={S.navBtn} onClick={() => nav("my-listings")}>Mes annonces</button>
-              <button style={S.navBtnPrimary} onClick={() => { setEditId(null); setPostForm(DEFAULT_POST_FORM); setImages([]); nav("post"); }}>+ Publier</button>
-              <button style={S.navBtn} onClick={logout}>Déconnexion</button>
-            </>
-          ) : (
-            <>
-              <button style={S.navBtn} onClick={() => { setAuthMode("login"); nav("auth"); }}>Connexion</button>
-              <button style={S.navBtnPrimary} onClick={() => { setAuthMode("register"); nav("auth"); }}>Créer un compte</button>
-            </>
-          )}
-        </div>
+        {compactNav && (
+          <button
+            aria-label="Ouvrir le menu"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen(o => !o)}
+            style={S.burger}
+          >
+            {menuOpen ? "✕" : "☰"}
+          </button>
+        )}
+        {(!compactNav || menuOpen) && (
+          <div className={compactNav ? "nav-menu-mobile" : undefined} style={compactNav ? S.navLinksMobile : S.navLinks}>
+            <button style={S.navBtn} onClick={() => nav("listings")}>Annonces</button>
+            {currentUser && <button style={S.navBtn} onClick={() => nav("favorites")}>♥ Favoris</button>}
+            {currentUser && <button style={S.navBtn} onClick={() => nav("messages")}>💬 Messages</button>}
+            {isAdmin && <button style={S.navBtn} onClick={() => nav("admin")}>⚙️ Admin</button>}
+            {currentUser ? (
+              <>
+                <button style={S.navBtn} onClick={() => nav("my-listings")}>Mes annonces</button>
+                <button style={S.navBtnPrimary} onClick={() => { setEditId(null); setPostForm(DEFAULT_POST_FORM); setImages([]); nav("post"); }}>+ Publier</button>
+                <button style={S.navBtn} onClick={logout}>Déconnexion</button>
+              </>
+            ) : (
+              <>
+                <button style={S.navBtn} onClick={() => { setAuthMode("login"); nav("auth"); }}>Connexion</button>
+                <button style={S.navBtnPrimary} onClick={() => { setAuthMode("register"); nav("auth"); }}>Créer un compte</button>
+              </>
+            )}
+          </div>
+        )}
       </nav>
 
       {toast && <div style={{ ...S.toast, ...(toast.type === "error" ? S.toastError : S.toastSuccess) }}>{toast.msg}</div>}
@@ -724,31 +736,31 @@ export default function App() {
       {page === "listings" && (
         <>
           <div style={S.filterBar}>
-            <span style={{ fontWeight: 700, fontSize: 15, color: "#0d2f6e" }}>🔍 Filtres</span>
+            <span style={{ fontWeight: 700, fontSize: 15, color: "#0d2f6e", ...(isMobile ? { order: -2 } : {}) }}>🔍 Filtres</span>
             <input
-              style={{ ...S.select, flex: "1 1 180px", minWidth: 140, cursor: "text" }}
+              style={{ ...S.select, flex: "1 1 180px", minWidth: 140, cursor: "text", ...S.filterFull }}
               type="text"
               placeholder="Rechercher (titre, lieu...)"
               value={search}
               onChange={e => setSearch(e.target.value)}
             />
-            <select style={S.select} value={filterVille} onChange={e => setFilterVille(e.target.value)}>
+            <select style={{ ...S.select, ...S.filterHalf }} value={filterVille} onChange={e => setFilterVille(e.target.value)}>
               <option value="Toutes">Toutes les villes</option>
               {VILLES.map(v => <option key={v}>{v}</option>)}
             </select>
-            <select style={S.select} value={filterDispo} onChange={e => setFilterDispo(e.target.value)}>
+            <select style={{ ...S.select, ...S.filterHalf }} value={filterDispo} onChange={e => setFilterDispo(e.target.value)}>
               <option value="Toutes">Tout statut</option>
               <option value="Disponible">Disponible</option>
               <option value="Occupée">Occupée</option>
             </select>
-            <select style={S.select} value={sortBy} onChange={e => setSortBy(e.target.value)}>
+            <select style={{ ...S.select, ...S.filterFull }} value={sortBy} onChange={e => setSortBy(e.target.value)}>
               <option value="recent">Plus récentes</option>
               <option value="price_asc">Prix croissant</option>
               <option value="price_desc">Prix décroissant</option>
             </select>
-            <input style={{ ...S.select, width: 90, cursor: "text" }} type="number" placeholder="Prix min" value={priceMin} onChange={e => setPriceMin(e.target.value)} />
-            <input style={{ ...S.select, width: 90, cursor: "text" }} type="number" placeholder="Prix max" value={priceMax} onChange={e => setPriceMax(e.target.value)} />
-            <span style={{ fontSize: 13, color: "#6b7280", marginLeft: "auto" }}>{sorted.length} annonce{sorted.length !== 1 ? "s" : ""}</span>
+            <input style={{ ...S.select, width: 90, cursor: "text", ...S.filterHalf }} type="number" placeholder="Prix min" value={priceMin} onChange={e => setPriceMin(e.target.value)} />
+            <input style={{ ...S.select, width: 90, cursor: "text", ...S.filterHalf }} type="number" placeholder="Prix max" value={priceMax} onChange={e => setPriceMax(e.target.value)} />
+            <span style={{ fontSize: 13, color: "#6b7280", marginLeft: "auto", ...(isMobile ? { order: -1, textAlign: "right" } : {}) }}>{sorted.length} annonce{sorted.length !== 1 ? "s" : ""}</span>
           </div>
           <div style={S.section}>
             {loading ? (
@@ -790,10 +802,10 @@ export default function App() {
             <div style={{ width: "100%", height: 280, background: "linear-gradient(135deg, #c7d9f7, #e2eaf7)", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 80 }}>🏠</div>
           )}
 
-          <div style={{ background: "#fff", borderRadius: 12, padding: 28, marginTop: 20, boxShadow: "0 1px 4px rgba(0,0,0,0.08)" }}>
+          <div style={{ ...S.panel, marginTop: 20 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
-              <div>
-                <h1 style={{ margin: "0 0 8px", fontSize: 24, fontWeight: 800, color: "#0d2f6e" }}>{detail.titre}</h1>
+              <div style={{ flex: "1 1 240px", minWidth: 0 }}>
+                <h1 style={{ margin: "0 0 8px", fontSize: isMobile ? 22 : 24, fontWeight: 800, color: "#0d2f6e" }}>{detail.titre}</h1>
                 <p style={{ margin: 0, color: "#555", fontSize: 15 }}>📍 {detail.localisation}</p>
                 {avgRating > 0 && (
                   <p style={{ margin: "6px 0 0", fontSize: 14 }}>
@@ -801,7 +813,7 @@ export default function App() {
                   </p>
                 )}
               </div>
-              <div style={{ textAlign: "right" }}>
+              <div style={{ textAlign: isMobile ? "left" : "right" }}>
                 <div style={S.price}>{Number(detail.prix).toLocaleString()} <span style={{ fontSize: 13, fontWeight: 400, color: "#6b7280" }}>{detail.devise}/mois</span></div>
                 <span style={{ ...S.badge, ...(detail.disponible ? S.badgeGreen : S.badgeRed) }}>{detail.disponible ? "✅ Disponible" : "🔴 Occupée"}</span>
               </div>
@@ -819,7 +831,7 @@ export default function App() {
             <p style={{ color: "#555", lineHeight: 1.7, margin: "0 0 20px" }}>{detail.description}</p>
 
             {canEdit && (
-              <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
                 <button style={S.editBtn} onClick={() => startEdit(detail)}>✏️ Modifier</button>
                 <button style={S.dangerBtn} onClick={() => deleteListing(detail.id)}>🗑️ Supprimer</button>
               </div>
@@ -854,12 +866,12 @@ export default function App() {
           </div>
 
           {/* AVIS */}
-          <div style={{ background: "#fff", borderRadius: 12, padding: 28, marginTop: 20, boxShadow: "0 1px 4px rgba(0,0,0,0.08)" }}>
+          <div style={{ ...S.panel, marginTop: 20 }}>
             <h3 style={{ fontWeight: 700, color: "#0d2f6e", margin: "0 0 16px", fontSize: 18 }}>⭐ Avis {reviews.length > 0 && `(${reviews.length})`}</h3>
             {reviews.length === 0 && <p style={{ color: "#6b7280", fontSize: 14 }}>Aucun avis pour le moment.</p>}
             {reviews.map(r => (
               <div key={r.id} style={S.reviewCard}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
                   <strong style={{ fontSize: 14, color: "#374151" }}>{r.reviewer_name}</strong>
                   <Stars value={r.rating} />
                 </div>
@@ -958,7 +970,7 @@ export default function App() {
           ) : (
             <div style={{ maxWidth: 620, margin: "0 auto" }}>
               <h2 style={{ ...S.sectionTitle, marginBottom: 24 }}>{editId ? "✏️ Modifier l'annonce" : "📢 Publier une annonce"}</h2>
-              <div style={{ background: "#fff", borderRadius: 12, padding: 28, boxShadow: "0 1px 4px rgba(0,0,0,0.08)" }}>
+              <div style={S.panel}>
                 <form onSubmit={handlePost}>
                   <div style={S.formGroup}>
                     <label style={S.label}>Titre *</label>
@@ -1003,7 +1015,7 @@ export default function App() {
 
                   <div style={S.formGroup}>
                     <label style={S.label}>Photos de la maison (max 6)</label>
-                    <input type="file" accept="image/*" multiple onChange={handleImagesChange} style={{ fontSize: 14 }} />
+                    <input type="file" accept="image/*" multiple onChange={handleImagesChange} style={{ fontSize: 14, maxWidth: "100%" }} />
                     {images.length > 0 && (
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
                         {images.map((img, i) => (
@@ -1046,7 +1058,7 @@ export default function App() {
             : <div style={S.grid}>{myListings.map(l => (
               <div key={l.id} style={{ ...S.card, cursor: "default" }}>
                 <ListingCard listing={l} onClick={() => nav("detail", l.id)} S={S} isFav={favorites.has(l.id)} onToggleFav={() => toggleFavorite(l.id)} />
-                <div style={{ display: "flex", gap: 8, padding: "0 16px 16px" }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", padding: "12px 16px 16px" }}>
                   <button style={S.editBtn} onClick={() => startEdit(l)}>✏️ Modifier</button>
                   <button style={S.dangerBtn} onClick={() => deleteListing(l.id)}>🗑️ Supprimer</button>
                 </div>
@@ -1084,11 +1096,11 @@ export default function App() {
                 const otherName = c.buyer_id === currentUser.id ? c.owner_name : c.buyer_name;
                 return (
                   <div key={c.id} onClick={() => nav("chat", c.id)} style={S.convRow}>
-                    <div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
                       <strong style={{ color: "#0d2f6e" }}>{otherName}</strong>
                       <p style={{ margin: "4px 0 0", fontSize: 13, color: "#6b7280" }}>À propos de : {c.listing_title}</p>
                     </div>
-                    <span style={{ fontSize: 20 }}>›</span>
+                    <span style={{ fontSize: 20, flexShrink: 0 }}>›</span>
                   </div>
                 );
               })}
@@ -1114,8 +1126,8 @@ export default function App() {
                 ))}
               </div>
               <form onSubmit={sendMessage} style={{ display: "flex", gap: 8, marginTop: 12 }}>
-                <input style={{ ...S.input, flex: 1 }} placeholder="Écrire un message..." value={messageInput} onChange={e => setMessageInput(e.target.value)} />
-                <button type="submit" style={{ ...S.btnGreen, padding: "10px 18px" }}>Envoyer</button>
+                <input style={{ ...S.input, flex: 1, minWidth: 0 }} placeholder="Écrire un message..." value={messageInput} onChange={e => setMessageInput(e.target.value)} />
+                <button type="submit" style={{ ...S.btnGreen, padding: "10px 18px", flexShrink: 0 }}>Envoyer</button>
               </form>
             </div>
           )}
@@ -1139,11 +1151,11 @@ export default function App() {
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {listings.map(l => (
                   <div key={l.id} style={S.adminRow}>
-                    <div>
+                    <div style={S.adminRowText}>
                       <strong style={{ color: "#0d2f6e" }}>{l.titre}</strong>
                       <p style={{ margin: "2px 0 0", fontSize: 13, color: "#6b7280" }}>{l.ville} · {l.owner_name} · {l.views || 0} vues</p>
                     </div>
-                    <div style={{ display: "flex", gap: 8 }}>
+                    <div style={S.adminRowActions}>
                       <button style={S.editBtn} onClick={() => nav("detail", l.id)}>Voir</button>
                       <button style={S.dangerBtn} onClick={() => deleteListing(l.id)}>Supprimer</button>
                     </div>
@@ -1156,11 +1168,11 @@ export default function App() {
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {adminUsers.map(u => (
                   <div key={u.id} style={S.adminRow}>
-                    <div>
+                    <div style={S.adminRowText}>
                       <strong style={{ color: "#0d2f6e" }}>{u.nom}</strong> {u.verified && <span style={{ color: "#0ea5e9" }}>✔️ Vérifié</span>}
                       <p style={{ margin: "2px 0 0", fontSize: 13, color: "#6b7280" }}>{u.whatsapp} · rôle : {u.role || "user"}</p>
                     </div>
-                    <button style={S.editBtn} onClick={() => toggleVerified(u.id, u.verified)}>{u.verified ? "Retirer vérification" : "Vérifier"}</button>
+                    <button style={{ ...S.editBtn, flexShrink: 0 }} onClick={() => toggleVerified(u.id, u.verified)}>{u.verified ? "Retirer vérification" : "Vérifier"}</button>
                   </div>
                 ))}
               </div>
@@ -1170,11 +1182,11 @@ export default function App() {
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {adminReviews.map(r => (
                   <div key={r.id} style={S.adminRow}>
-                    <div>
+                    <div style={S.adminRowText}>
                       <strong style={{ color: "#0d2f6e" }}>{r.reviewer_name}</strong> <Stars value={r.rating} />
                       {r.comment && <p style={{ margin: "2px 0 0", fontSize: 13, color: "#6b7280" }}>{r.comment}</p>}
                     </div>
-                    <button style={S.dangerBtn} onClick={() => adminDeleteReview(r.id)}>Supprimer</button>
+                    <button style={{ ...S.dangerBtn, flexShrink: 0 }} onClick={() => adminDeleteReview(r.id)}>Supprimer</button>
                   </div>
                 ))}
               </div>
@@ -1208,7 +1220,7 @@ function ListingCard({ listing, onClick, S, isFav, onToggleFav }) {
         <h3 style={S.cardTitle}>{listing.titre}</h3>
         <p style={S.cardMeta}>📍 {listing.ville}</p>
         {listing.chambres > 0 && <p style={S.cardMeta}>🛏️ {listing.chambres} chambre{listing.chambres > 1 ? "s" : ""}</p>}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 10 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
           <span style={S.price}>{Number(listing.prix).toLocaleString()} <span style={{ fontSize: 12, fontWeight: 400, color: "#6b7280" }}>{listing.devise}/mois</span></span>
           <span style={{ ...S.badge, ...(listing.disponible ? S.badgeGreen : S.badgeRed) }}>{listing.disponible ? "Disponible" : "Occupée"}</span>
         </div>
@@ -1241,7 +1253,7 @@ function Stars({ value }) {
 
 function InfoPill({ icon, label, value }) {
   return (
-    <div style={{ background: "#f7f6f2", borderRadius: 8, padding: "10px 14px" }}>
+    <div style={{ background: "#f7f6f2", borderRadius: 8, padding: "10px 14px", minWidth: 0 }}>
       <p style={{ margin: 0, fontSize: 12, color: "#6b7280" }}>{icon} {label}</p>
       <p style={{ margin: "2px 0 0", fontSize: 14, fontWeight: 600, color: "#1a1a1a" }}>{value}</p>
     </div>
