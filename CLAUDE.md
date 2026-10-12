@@ -9,7 +9,8 @@ Rental listing platform for Fungurume (Katanga, DRC), expanding to other Congole
 ## Stack
 - React 19 + Vite 8, single-page app. Almost everything is in `src/App.jsx` (inline style object `S`, hash routing via `parseRoute()` / `routeHash()` / `nav()`).
 - Supabase: auth + Postgres. Client is created in `App.jsx` from `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` in `.env`.
-- Netlify auto-deploys every push to `main`. **Pushing = going live.**
+- Netlify auto-deploys every push to `main`. **Pushing to `main` = going live.**
+- Every other branch gets its own preview site at `https://<branch>--immocongo-jandj.netlify.app` (Netlify branch deploys). Previews and the live site share the same Supabase database.
 
 ## Database (public schema)
 - `listings` — titre, prix, devise, localisation, ville, chambres, description, whatsapp, disponible, image_url, images (JSON string of base64 photos, max 6), owner_id, owner_name, views, created_at
@@ -18,14 +19,25 @@ Rental listing platform for Fungurume (Katanga, DRC), expanding to other Congole
 - RPC `increment_views(p_id)`; Realtime enabled on `messages`
 - All schema changes go in a new file under `supabase/migrations/` (create the folder if missing) AND get applied to the database. Keep `supabase_migration.sql` as the historical baseline.
 
-## Workflow
+## Workflow: preview first, live only after Junior says yes
+What to work on: the first unchecked item of the current phase in `ROADMAP.md`, unless Junior asks for something else. Mark it `[~]` when you start and `[x] (date)` when it is live.
+
 1. `npm install` (first time only)
-2. Make the change
-3. `npm run lint` — must be clean (0 errors)
-4. `npm run build` — must succeed
-5. Add an entry to `CHANGELOG.md`
-6. `git add -A && git commit -m "<clear French or English message>" && git push`
-7. Check the Netlify deploy finished, then check the live site
+2. Start from the latest `main` on a new short branch: `git switch main`, `git pull`, `git switch -c <short-name>` (lowercase and dashes only, e.g. `photo-storage`)
+3. Make the change. `npm run lint` must show 0 errors and `npm run build` must succeed.
+4. Add an entry to `CHANGELOG.md` (plain language, what changed for visitors and owners)
+5. Commit and `git push -u origin <short-name>`
+6. Wait for the Netlify deploy of that branch, then check the preview at `https://<short-name>--immocongo-jandj.netlify.app` at phone width (375px) and desktop
+7. **Stop.** Send Junior the preview link and a short, simple explanation of what to look at. Don't merge until Junior says yes in the chat.
+8. After Junior's yes: `git switch main`, `git pull`, `git merge --no-ff <short-name>`, `git push`. Then delete the branch (`git branch -d <short-name>`, `git push origin --delete <short-name>`), check the Netlify production deploy finished and the live site works, and tick the item in `ROADMAP.md`.
+
+Exceptions:
+- **Docs only** (`CLAUDE.md`, `ROADMAP.md`, agent files, no code): commit straight to `main` with `[skip netlify]` in the commit message, so no site rebuild happens.
+- **Live site broken:** revert straight on `main` (`git revert <commit>`, `git push`), confirm the site is back, then tell Junior.
+
+Database changes (previews use the live database!):
+- Before Junior's yes, only make **additive** changes the live site can live with: new tables, columns, buckets, policies, functions.
+- Renaming or dropping anything, or rewriting existing rows, waits until the code that needs it is live. Back up data before rewriting it, and ask Junior before deleting real data.
 
 ## Gotchas (learned the hard way)
 - `.env` must never be committed (it's in `.gitignore`). On a new machine, recreate it by hand.
@@ -35,11 +47,7 @@ Rental listing platform for Fungurume (Katanga, DRC), expanding to other Congole
 - Admin = `profiles.role = 'admin'`. Junior's real login account is the one whose profile row exists — check `profiles`, not just `auth.users` (there's a stray duplicate auth user with no profile).
 - In the Claude desktop app's Linux sandbox: `vite build` can crash with "Bus error" (environment issue, not the code), git write commands can leave a stale `.git/index.lock`, and files can't be deleted. If that happens, tell Junior to run `rm -f .git/index.lock` in Git Bash. Prefer running git from Junior's own terminal/Claude Code on Windows.
 - Junior types commands manually in Git Bash — when giving him commands, one per line, no leading `$`.
+- The GitHub CLI (`gh`) is not installed on Junior's laptop, so we use Netlify branch previews instead of pull requests.
 
-## Known issues / backlog (highest value first)
-1. Mobile layout: elements overlap on small screens (reported by Junior). Check nav, filter bar, detail page action buttons, admin rows.
-2. Photos are stored as base64 inside the `listings` row — slow and heavy. Move to Supabase Storage (bucket `listing-photos`) with client-side compression.
-3. Split `App.jsx` (~1250 lines) into components/pages.
-4. Unread-message badge on the Messages nav link.
-5. Owner dashboard: views/favorites per listing.
-6. Image compression before upload; enforce file type.
+## Plan and backlog
+See `ROADMAP.md` (phases, priorities, what's done).

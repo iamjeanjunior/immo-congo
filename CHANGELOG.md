@@ -2,6 +2,11 @@
 
 Newest first. Written for Junior: what changed for visitors and owners.
 
+## 2026-10-12 — New way of working
+- New `ROADMAP.md`: the full plan in 4 phases (fast and good-looking → getting known → making money → international).
+- From now on, every change first goes to a preview link. Junior checks it on a phone, and it goes live only after Junior says yes.
+- No change for visitors.
+
 ## 2026-10-12 — Phone layout fixed
 - The menu no longer covers the top of the page on phones. Before, the menu links were always open over the page; now they only show when you tap ☰, and they close when you pick a page.
 - On tablets and phones turned sideways, logged-in users now get the ☰ menu too, instead of 7 squeezed links touching the logo.
