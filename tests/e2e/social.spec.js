@@ -31,7 +31,6 @@ test("avis : laisser une note et un commentaire", async ({ page }) => {
   const listing = await seededListing("Appartement meublé centre-ville");
   await login(page, user);
   await open(page, `listing/${listing.id}`);
-  await page.waitForLoadState("networkidle"); // profile loaded (the review is signed with its name)
 
   const form = page.locator("form", { hasText: "Votre note" });
   await form.getByText("★", { exact: true }).nth(3).click(); // 4 stars
@@ -47,6 +46,49 @@ test("avis : laisser une note et un commentaire", async ({ page }) => {
   expect(data[0]).toMatchObject({ listing_id: listing.id, rating: 4, comment, reviewer_name: user.nom });
 });
 
+test("avis et message envoyés juste après l'ouverture de la page : signés avec le vrai nom", async ({ page }) => {
+  const owner = await createUser();
+  const user = await createUser();
+  const listing = await createListing(owner);
+  await login(page, user);
+
+  // Hold back the profile, like on a slow connection: the site doesn't know the user's name yet.
+  let releaseProfiles;
+  const held = new Promise(resolve => { releaseProfiles = resolve; });
+  await page.route(/\/rest\/v1\/profiles/, async route => {
+    await held;
+    await route.continue().catch(() => {}); // the page may already be closed
+  });
+  const sent = [];
+  page.on("request", req => {
+    if (req.method() === "POST" && /\/rest\/v1\/(reviews|conversations)/.test(req.url())) {
+      const body = req.postDataJSON();
+      sent.push(Array.isArray(body) ? body[0] : body);
+    }
+  });
+
+  try {
+    await open(page, `listing/${listing.id}`);
+    const form = page.locator("form", { hasText: "Votre note" });
+    await form.getByPlaceholder("Votre commentaire (optionnel)").fill(`Avis envoyé tout de suite (${user.nom})`);
+    await form.getByRole("button", { name: "Publier mon avis" }).click();
+    await expect(page.getByText("Merci pour votre avis !")).toBeVisible();
+    await expect(page.getByText(user.nom, { exact: true }), "the review shows the real name").toBeVisible();
+    await page.getByRole("button", { name: "💬 Message au propriétaire" }).click();
+    await expect(page).toHaveURL(/#\/chat\/\d+$/);
+  } finally {
+    releaseProfiles();
+  }
+
+  // The site really sent "Utilisateur" (its profile was not loaded yet)...
+  expect(sent.map(b => b.reviewer_name || b.buyer_name)).toEqual(["Utilisateur", "Utilisateur"]);
+  // ...and the database signed both with the real name.
+  const { data: reviews } = await db.from("reviews").select("reviewer_name").eq("user_id", user.id);
+  expect(reviews).toEqual([{ reviewer_name: user.nom }]);
+  const { data: convs } = await db.from("conversations").select("buyer_name, owner_name, owner_id").eq("buyer_id", user.id);
+  expect(convs).toEqual([{ buyer_name: user.nom, owner_name: owner.nom, owner_id: owner.id }]);
+});
+
 test("messages : un locataire écrit au propriétaire, qui répond (en direct)", async ({ page, browser }) => {
   const owner = await createUser({ nom: `Propriétaire ${Date.now().toString(36)}` });
   const buyer = await createUser({ nom: `Locataire ${Date.now().toString(36)}` });
@@ -55,7 +97,6 @@ test("messages : un locataire écrit au propriétaire, qui répond (en direct)",
   // Buyer (the test's own page) opens the listing and starts a conversation.
   await login(page, buyer);
   await open(page, `listing/${listing.id}`);
-  await page.waitForLoadState("networkidle"); // profile loaded (the conversation is signed with its name)
   const buyerLive = waitForLiveChat(page);
   await page.getByRole("button", { name: "💬 Message au propriétaire" }).click();
   await expect(page).toHaveURL(/#\/chat\/\d+$/);

@@ -179,7 +179,7 @@ test("un PDF est refusé avec un message clair", async ({ page }) => {
 });
 
 test("un admin qui supprime l'annonce de quelqu'un d'autre supprime aussi ses photos", async ({ page }) => {
-  test.fail(true, "BUG (known, ROADMAP 'Ideas / later'): Storage only lets users delete files in their own folder, so when an admin deletes someone else's listing its photo files stay in Storage (same when an admin removes a photo while editing someone else's listing). Needs an admin delete rule on storage.objects.");
+  // Fixed by the Storage rule "listing_photos_admin_delete" (admins may delete files in every folder).
   const owner = await createUser();
   const listing = await createListing(owner, { photos: ["photo-1.png"] });
 
@@ -190,4 +190,23 @@ test("un admin qui supprime l'annonce de quelqu'un d'autre supprime aussi ses ph
   await expect(page.getByText("Annonce supprimée.")).toBeVisible();
   expect(await getListing(listing.id)).toBeNull();
   await expect.poll(async () => (await listPhotoFiles(owner.id)).length, { message: "the owner's photo file is deleted", timeout: 5_000 }).toBe(0);
+});
+
+test("un admin qui retire une photo de l'annonce de quelqu'un d'autre supprime aussi son fichier", async ({ page }) => {
+  const owner = await createUser();
+  const listing = await createListing(owner, { photos: ["photo-1.png", "photo-2.jpg"] });
+  const [keep] = listing.photoUrls;
+
+  await login(page, SEED.admin);
+  await open(page, `listing/${listing.id}`);
+  await page.getByRole("button", { name: "✏️ Modifier" }).click();
+  await expect(formPhotos(page)).toHaveCount(2);
+  await page.getByRole("button", { name: "Retirer cette photo" }).nth(1).click();
+  await expect(formPhotos(page)).toHaveCount(1);
+  await page.getByRole("button", { name: "Enregistrer" }).click();
+  await expect(page.getByText("Annonce modifiée !")).toBeVisible();
+
+  expect(await getListing(listing.id)).toMatchObject({ owner_id: owner.id, owner_name: owner.nom, images: JSON.stringify([keep]) });
+  await expect.poll(async () => (await listPhotoFiles(owner.id)).map(f => `${owner.id}/${f.name}`), { message: "the removed photo's file is deleted", timeout: 5_000 })
+    .toEqual([storagePath(keep)]);
 });

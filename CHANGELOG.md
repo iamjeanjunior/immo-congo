@@ -2,6 +2,17 @@
 
 Newest first. Written for Junior: what changed for visitors and owners.
 
+## 2026-10-12 — Trust fixes (preview, waiting for Junior's yes)
+- **Real names only.** The owner's name on a listing and the name on a review now always come from the person's own account. Before, someone with technical knowledge could publish a listing or a review under another name (for example "Admin"). Now the database writes the real name itself, whatever the phone sends. When an admin edits someone's listing, the owner's name stays.
+- **Name changes follow everywhere.** If a person changes their name, their listings, reviews and conversations show the new name too.
+- **Honest view counts.** Only real visits of a listing page count. Before, an owner could set any number of "Vues" on their own listing.
+- **Messages go to the right person.** A conversation is always with the real owner of the listing.
+- **Fixed: "Utilisateur" instead of the real name.** A review or a conversation started very quickly after opening the page (on a slow connection) could be signed "Utilisateur". Now it always has the person's real name.
+- **Admin: photo files are cleaned up.** When the admin deletes someone else's listing, or removes a photo from it, the photo files are now deleted too. Before, they stayed in the photo store.
+- **"Mes annonces" when not logged in** now says "Connectez-vous pour voir vos annonces." with a "Se connecter" button, like Favoris and Messages. Before it said "Vous n'avez pas encore d'annonces.", which was confusing.
+- The database rules are already switched on for the real site: they were checked with the current site first and change nothing for normal use. No existing listing, review or conversation had to be changed. The "Mes annonces" message goes live after Junior's yes.
+- Automatic tests: 48 passed (9 new). The known problem from last time (admin photo files) is fixed.
+
 ## 2026-10-12 — Automatic tests (for developers, no change for visitors)
 - Nothing changes on the website. This is a tool for Claude, so Junior no longer has to test everything by hand.
 - Junior's laptop now has a private test copy of the website's database (it runs in Docker Desktop). It has the same tables and the same security rules as the real one, but only fake test accounts and fake listings. The real database and real accounts are never used by the tests.

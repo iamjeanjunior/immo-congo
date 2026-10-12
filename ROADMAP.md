@@ -26,7 +26,7 @@ The best real-estate website, starting in Fungurume and Katanga, then all of DR 
 - [x] **Fix: an admin editing someone else's listing becomes its owner.** Editing no longer sends `owner_id` / `owner_name`. (2026-10-12)
 - [x] **Security: only admins can change a profile's role or verified badge** (trigger `protect_profile_privileges`). (2026-10-12)
 - [x] **Automatic testing, so Junior rarely has to test by hand.** Local copy of Supabase (Supabase CLI + Docker Desktop) with test accounts, and 39 automatic browser and database tests; run with `npm run test:e2e` before every preview. (2026-10-12)
-- [ ] **Trust fixes** (found by the automatic tests; do before promoting the site):
+- [~] **Trust fixes** (found by the automatic tests; do before promoting the site). Database part live since 2026-10-12 (migration `trust_fixes`); "Mes annonces" message on the preview `trust-fixes`:
   - Names shown on listings and reviews come from the author's profile in the database, not from what the browser sends.
   - Only the view counter (`increment_views`) can change a listing's view count, not its owner.
   - Conversations can only be started with the real owner of an existing listing.
@@ -69,6 +69,10 @@ Start charging only once there are enough listings and visitors. Prices to decid
 
 ## Ideas / later
 - 🧑 Decide what to do with Junior's second login account (no profile): delete it, or give it a profile.
+- 🧑 One live listing shows its owner as "Utilisateur" (that account's profile name is "Utilisateur"). Tell Claude the right name: fixing the profile updates the listing by itself.
+- "Mon profil" page to change one's name and WhatsApp number (the name then follows on listings, reviews and conversations automatically).
+- Photos an admin adds while editing someone else's listing go into the admin's photo folder, so the owner can't delete those files later (they stay in Storage).
+- View counter: every page opening counts (reloading pushes it up). Count one view per visitor per day.
 - 🧑 Delete the leftover "migrate-listing-photos" Edge Function in the Supabase dashboard (it's already switched off).
 - After 2026-11-09, if all is well: drop the temporary table `listing_photos_backup` (backup of the old photos).
 - Report a fake or already-rented listing.
