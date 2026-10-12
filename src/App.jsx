@@ -32,6 +32,13 @@ async function removeStoredPhotos(urls) {
   }
 }
 
+// A new listing needs a row in "profiles" for its owner (database rule listings_owner_id_fkey).
+const PROFILE_MISSING_MSG = "Votre profil est introuvable, l'annonce n'a pas été publiée. Vérifiez votre connexion puis réessayez. Si cela continue, contactez ImmoCongo sur WhatsApp (numéro en bas de la page d'accueil).";
+
+function isMissingProfileError(err) {
+  return err?.code === "23503" && String(err?.message || "").includes("listings_owner_id_fkey");
+}
+
 const VILLES = ["Fungurume", "Kolwezi", "Lubumbashi", "Likasi", "Kipushi", "Autre"];
 const PAGE_SIZE = 9;
 const DEFAULT_POST_FORM = {
@@ -107,6 +114,7 @@ export default function App() {
   const [adminReviews, setAdminReviews] = useState([]);
   const [adminTab, setAdminTab] = useState("listings");
   const viewedRef = useRef(new Set());
+  const toastTimerRef = useRef(null);
 
   const isAdmin = profile?.role === "admin";
   const isMobile = useMediaQuery("(max-width: 640px)");
@@ -444,9 +452,10 @@ export default function App() {
     }
   }
 
-  function showToast(msg, type = "success") {
+  function showToast(msg, type = "success", duration = 3500) {
     setToast({ msg, type });
-    setTimeout(() => setToast(null), 3500);
+    clearTimeout(toastTimerRef.current); // an older toast's timer must not hide this one early
+    toastTimerRef.current = setTimeout(() => setToast(null), duration);
   }
 
   function nav(p, id = null) {
@@ -462,14 +471,23 @@ export default function App() {
     e.preventDefault();
     setSubmitting(true);
     if (authMode === "register") {
+      // nom + whatsapp also travel with the signup: the database uses them to create the profile by itself.
       const { data, error } = await supabase.auth.signUp({
         email: form.email,
         password: form.password,
-        options: { emailRedirectTo: window.location.origin }
+        options: { emailRedirectTo: window.location.origin, data: { nom: form.nom, whatsapp: form.whatsapp } }
       });
       if (error) { showToast(error.message, "error"); setSubmitting(false); return; }
       if (data.user) {
-        await supabase.from("profiles").insert({ id: data.user.id, nom: form.nom, whatsapp: form.whatsapp, role: "user" });
+        // Upsert, not insert: the database may already have created the profile (signup trigger),
+        // and a plain insert would then fail. No "role" here: new accounts are always "user".
+        const { data: saved, error: profileError } = await supabase
+          .from("profiles")
+          .upsert({ id: data.user.id, nom: form.nom, whatsapp: form.whatsapp }, { onConflict: "id" })
+          .select()
+          .single();
+        // If this failed, the profile is created again before the first publish (see ensureProfile).
+        if (!profileError) setProfile(saved);
         showToast(`Bienvenue, ${form.nom} !`);
         nav("home");
       }
@@ -524,11 +542,43 @@ export default function App() {
     setImages([]);
   }
 
+  // Makes sure the signed-in user has their row in "profiles" (a new listing needs it) and returns it.
+  // Older accounts can miss it. The database only lets a user create their own row.
+  async function ensureProfile() {
+    if (profile?.id === currentUser.id) return profile;
+    const { data: found, error: findError } = await supabase.from("profiles").select("*").eq("id", currentUser.id).maybeSingle();
+    if (findError) throw findError;
+    if (found) { setProfile(found); return found; }
+    const meta = currentUser.user_metadata || {};
+    const { error: createError } = await supabase.from("profiles").upsert({
+      id: currentUser.id,
+      nom: String(meta.nom || "").trim() || "Utilisateur",
+      whatsapp: String(meta.whatsapp || postForm.whatsapp || "").trim() || null,
+    }, { onConflict: "id", ignoreDuplicates: true });
+    if (createError) throw createError;
+    const { data: created, error: readError } = await supabase.from("profiles").select("*").eq("id", currentUser.id).single();
+    if (readError) throw readError;
+    setProfile(created);
+    return created;
+  }
+
   async function handlePost(e) {
     e.preventDefault();
     if (!currentUser) { nav("auth"); return; }
     if (preparingPhotos) return;
     setSubmitting(true);
+
+    // 0. A new listing needs the owner's profile: create it now if this account has none.
+    let myProfile = profile;
+    if (!editId) {
+      try {
+        myProfile = await ensureProfile();
+      } catch {
+        setSubmitting(false);
+        showToast(PROFILE_MISSING_MSG, "error", 10000);
+        return;
+      }
+    }
 
     // 1. Upload the new photos first. If one fails, nothing is saved and the form stays as it is.
     const newPhotos = images.filter(p => p.blob);
@@ -549,7 +599,10 @@ export default function App() {
     // 2. Save the listing with photo URLs (existing photos keep their URL or old base64).
     setUploadStatus("Enregistrement…");
     const photoUrls = images.map(p => uploadedUrls.get(p) || p.src);
-    const previousPhotos = editId ? listingPhotos(listings.find(l => l.id === editId)) : [];
+    const original = editId ? listings.find(l => l.id === editId) : null;
+    const previousPhotos = original ? listingPhotos(original) : [];
+    // An admin editing someone else's listing with an empty WhatsApp field keeps the listing's number, not the admin's.
+    const fallbackWhatsapp = original && original.owner_id !== currentUser.id ? original.whatsapp : myProfile?.whatsapp;
     const listing = {
       titre: postForm.titre,
       prix: parseFloat(postForm.prix),
@@ -558,15 +611,14 @@ export default function App() {
       ville: postForm.ville,
       chambres: parseInt(postForm.chambres) || 0,
       description: postForm.description,
-      whatsapp: postForm.whatsapp || profile?.whatsapp || "",
+      whatsapp: postForm.whatsapp || fallbackWhatsapp || "",
       disponible: postForm.disponible === "true",
       image_url: photoUrls[0] || null,
       images: JSON.stringify(photoUrls),
-      owner_id: currentUser.id,
-      owner_name: profile?.nom || "Propriétaire",
     };
     try {
       if (editId) {
+        // No owner_id / owner_name: editing never changes who owns the listing (admins can edit others' listings).
         const { error } = await supabase.from("listings").update(listing).eq("id", editId);
         if (error) throw error;
         // Photos removed while editing: delete their files (best effort, never blocks).
@@ -574,7 +626,11 @@ export default function App() {
         showToast("Annonce modifiée !");
         setEditId(null);
       } else {
-        const { error } = await supabase.from("listings").insert(listing);
+        const { error } = await supabase.from("listings").insert({
+          ...listing,
+          owner_id: currentUser.id,
+          owner_name: myProfile?.nom || "Propriétaire",
+        });
         if (error) throw error;
         showToast("Annonce publiée avec succès !");
       }
@@ -582,10 +638,11 @@ export default function App() {
       setPostForm(DEFAULT_POST_FORM);
       clearFormPhotos();
       nav("listings");
-    } catch {
+    } catch (err) {
       // The listing was not saved: remove the photos we just uploaded so nothing is left half-done.
       removeStoredPhotos([...uploadedUrls.values()]);
-      showToast(editId ? "Erreur lors de la modification." : "Erreur lors de la publication.", "error");
+      if (isMissingProfileError(err)) showToast(PROFILE_MISSING_MSG, "error", 10000);
+      else showToast(editId ? "Erreur lors de la modification." : "Erreur lors de la publication.", "error");
     } finally {
       setUploadStatus("");
       setSubmitting(false);
@@ -645,6 +702,7 @@ export default function App() {
   const favoriteListings = listings.filter(l => favorites.has(l.id));
   const detail = listings.find(l => l.id === selectedId);
   const canEdit = detail && currentUser && (detail.owner_id === currentUser.id || profile?.role === "admin");
+  const editingOthersListing = Boolean(editId && currentUser && listings.find(l => l.id === editId)?.owner_id !== currentUser.id);
   const detailPhotos = listingPhotos(detail);
   const avgRating = reviews.length ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length : 0;
   const relatedListings = detail ? listings.filter(l => l.id !== detail.id && l.ville === detail.ville).slice(0, 3) : [];
@@ -1089,7 +1147,7 @@ export default function App() {
                   </div>
                   <div style={S.formGroup}>
                     <label style={S.label}>WhatsApp de contact</label>
-                    <input style={S.input} placeholder={profile?.whatsapp || "+243 XXX XXX XXX"} value={postForm.whatsapp} onChange={e => setPostForm(f => ({ ...f, whatsapp: e.target.value }))} />
+                    <input style={S.input} placeholder={(!editingOthersListing && profile?.whatsapp) || "+243 XXX XXX XXX"} value={postForm.whatsapp} onChange={e => setPostForm(f => ({ ...f, whatsapp: e.target.value }))} />
                   </div>
 
                   <div style={S.formGroup}>
