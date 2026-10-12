@@ -36,10 +36,10 @@ The best real-estate website, starting in Fungurume and Katanga, then all of DR 
 - [ ] Owner dashboard: views and favourites for each of my listings.
 
 ## Phase 2 — Getting known
-- [ ] **Real page addresses** instead of `#/` links (for example `/annonce/12`). Needed for Google and for link previews.
-- [ ] **Link previews on WhatsApp and Facebook:** a shared listing shows its photo, price and town.
+- [~] **Real page addresses** instead of `#/` links (for example `/annonce/12-maison-2-chambres-fungurume`). Needed for Google and for link previews. Old `#/` links still work.
+- [~] **Link previews on WhatsApp and Facebook:** a shared listing shows its photo, price and town.
 - [ ] "Partager sur WhatsApp" button on every listing.
-- [ ] Google basics: page titles and descriptions, sitemap, Google Search Console.
+- [~] Google basics: page titles and descriptions, sitemap, robots.txt. 🧑 After it is live: submit the sitemap in Google Search Console.
 - [ ] Installable on the phone home screen like an app (PWA), works on slow connections.
 - [ ] 🧑 Buy our own domain (for example `immocongo.com` or `.cd`); Claude connects it to Netlify.
 - [ ] 🧑 Bring landlords on board: free listings, help them post (or post for them) in Fungurume first.
@@ -62,6 +62,7 @@ Start charging only once there are enough listings and visitors. Prices to decid
 ---
 
 ## Ideas / later
+- **Future design vision.** Junior's inspiration sites for the next design pass: property24.co.na, booking.com, realtyhive.com, zillow.com, apartments.com.
 - 🧑 Home page picture: today it is a light drawing of houses at dusk. If Junior takes a nice photo of Fungurume himself (his own, so we have the rights), Claude can use it instead, shrunk to a WebP under 150 KB.
 - 🧑 Decide what to do with Junior's second login account (no profile): delete it, or give it a profile.
 - 🧑 One live listing shows its owner as "Utilisateur" (that account's profile name is "Utilisateur"). Tell Claude the right name: fixing the profile updates the listing by itself.

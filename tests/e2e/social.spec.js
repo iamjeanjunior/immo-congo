@@ -79,7 +79,7 @@ test("avis et message envoyés juste après l'ouverture de la page : signés ave
     await expect(page.getByText("Merci pour votre avis !")).toBeVisible();
     await expect(page.getByText(user.nom, { exact: true }), "the review shows the real name").toBeVisible();
     await page.getByRole("button", { name: "Message au propriétaire" }).click();
-    await expect(page).toHaveURL(/#\/chat\/\d+$/);
+    await expect(page).toHaveURL(/\/messages\/\d+$/);
   } finally {
     releaseProfiles();
   }
@@ -103,7 +103,7 @@ test("messages : un locataire écrit au propriétaire, qui répond (en direct)",
   await open(page, `listing/${listing.id}`);
   const buyerLive = waitForLiveChat(page);
   await page.getByRole("button", { name: "Message au propriétaire" }).click();
-  await expect(page).toHaveURL(/#\/chat\/\d+$/);
+  await expect(page).toHaveURL(/\/messages\/\d+$/);
   await expect(page.getByText("Aucun message. Dites bonjour 👋")).toBeVisible();
   await buyerLive;
   const question = "Bonjour, la maison est-elle encore libre ?";

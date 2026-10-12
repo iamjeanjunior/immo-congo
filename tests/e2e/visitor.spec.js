@@ -118,7 +118,7 @@ test("accueil : la recherche (ville, prix max, chambres) ouvre les annonces filt
   await search.getByRole("button", { name: "Rechercher" }).click();
 
   // Straight to the listings page, with the same filters.
-  await expect(page).toHaveURL(/#\/listings$/);
+  await expect(page).toHaveURL(/\/annonces$/);
   await expect(page.getByRole("heading", { name: "Annonces", exact: true })).toBeVisible();
   await openFilters(page);
   await expect(page.getByLabel("Ville", { exact: true })).toHaveValue("Fungurume");

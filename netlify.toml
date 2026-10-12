@@ -1,0 +1,39 @@
+# Netlify settings that live with the code. Build command and publish folder stay in the Netlify UI.
+# Edge Functions (netlify/edge-functions/) add Google and link-preview tags to public pages and make /sitemap.xml.
+
+# Real page addresses (/annonces, /annonce/12-..., /connexion...): every address that isn't a real file
+# opens the app. Real files (assets, robots.txt, the Google verification file...) are served as they are.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Members-only pages: never in Google.
+[[headers]]
+  for = "/connexion"
+  [headers.values]
+    X-Robots-Tag = "noindex"
+[[headers]]
+  for = "/publier"
+  [headers.values]
+    X-Robots-Tag = "noindex"
+[[headers]]
+  for = "/favoris"
+  [headers.values]
+    X-Robots-Tag = "noindex"
+[[headers]]
+  for = "/messages"
+  [headers.values]
+    X-Robots-Tag = "noindex"
+[[headers]]
+  for = "/messages/*"
+  [headers.values]
+    X-Robots-Tag = "noindex"
+[[headers]]
+  for = "/mes-annonces"
+  [headers.values]
+    X-Robots-Tag = "noindex"
+[[headers]]
+  for = "/admin"
+  [headers.values]
+    X-Robots-Tag = "noindex"

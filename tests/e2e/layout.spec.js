@@ -27,7 +27,7 @@ test("pas de défilement horizontal à 375px sur les pages principales", async (
     await open(page, route);
     await expect(page.locator("nav")).toBeVisible();
     await page.waitForLoadState("networkidle");
-    await expectNoSideScroll(page, `visitor #/${route}`);
+    await expectNoSideScroll(page, `visitor /${route}`);
   }
   await openMenu(page);
   await expectNoSideScroll(page, "visitor menu open");
@@ -51,7 +51,7 @@ test("pas de défilement horizontal à 375px sur les pages principales", async (
     await open(page, route);
     await expect(page.getByText(ready, { exact: true }).first()).toBeVisible();
     await page.waitForLoadState("networkidle");
-    await expectNoSideScroll(page, `logged in #/${route}`);
+    await expectNoSideScroll(page, `logged in /${route}`);
   }
   await openMenu(page);
   await expectNoSideScroll(page, "logged-in menu open");
@@ -60,7 +60,7 @@ test("pas de défilement horizontal à 375px sur les pages principales", async (
   await login(page, owner);
   await open(page, "my-listings");
   await expect(page.getByRole("button", { name: "Modifier", exact: true })).toBeVisible();
-  await expectNoSideScroll(page, "owner #/my-listings");
+  await expectNoSideScroll(page, "owner /my-listings");
 
   // The confirmation window fits on the phone screen.
   await page.getByRole("button", { name: "Supprimer", exact: true }).click();

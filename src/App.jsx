@@ -4,6 +4,7 @@ import { PHOTO_BUCKET, MAX_PHOTOS, listingPhotos, storagePathFromUrl, checkPhoto
 import Icon from "./Icon.jsx";
 import ConfirmDialog from "./ConfirmDialog.jsx";
 import CurrencySheet from "./CurrencySheet.jsx";
+import { SITE_URL, pageMeta, pagePath, listingPath, routeFromPath, routeFromLegacyHash } from "./seo.js";
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
@@ -142,22 +143,32 @@ const DEFAULT_POST_FORM = {
   chambres: "", description: "", whatsapp: "", disponible: "true",
 };
 
+// Page from the address bar: real addresses like /annonces or /annonce/12-maison-... (see src/seo.js).
+// Old shared links ("/#/listing/12") and unknown addresses are replaced by the right address.
 function parseRoute() {
-  const hash = window.location.hash.replace(/^#\/?/, "");
-  if (!hash) return { page: "home", id: null };
-  const [seg, idRaw] = hash.split("/");
-  if (seg === "listing" && idRaw) return { page: "detail", id: /^\d+$/.test(idRaw) ? Number(idRaw) : idRaw };
-  if (seg === "chat" && idRaw) return { page: "chat", id: /^\d+$/.test(idRaw) ? Number(idRaw) : idRaw };
-  const known = ["listings", "auth", "post", "my-listings", "favorites", "messages", "admin"];
-  if (known.includes(seg)) return { page: seg, id: null };
+  const legacy = routeFromLegacyHash(window.location.hash);
+  if (legacy) {
+    window.history.replaceState(null, "", pagePath(legacy.page, legacy.id) + window.location.search);
+    return legacy;
+  }
+  const route = routeFromPath(window.location.pathname);
+  if (route) return route;
+  window.history.replaceState(null, "", "/" + window.location.search + window.location.hash);
   return { page: "home", id: null };
 }
 
-function routeHash(page, id) {
-  if (page === "detail") return `#/listing/${id}`;
-  if (page === "chat") return `#/chat/${id}`;
-  if (page === "home") return "#/";
-  return `#/${page}`;
+// <meta name=…> / <link rel=…> in the page head: set its value, or remove it when the value is null.
+function setHeadTag(selector, create, attr, value) {
+  let el = document.head.querySelector(selector);
+  if (value == null) {
+    if (el) el.remove();
+    return;
+  }
+  if (!el) {
+    el = create();
+    document.head.appendChild(el);
+  }
+  el.setAttribute(attr, value);
 }
 
 // True while the CSS media query matches (re-renders when the screen size changes).
@@ -171,7 +182,7 @@ function useMediaQuery(query) {
 }
 
 export default function App() {
-  const initialRoute = parseRoute();
+  const [initialRoute] = useState(parseRoute);
   const [page, setPage] = useState(initialRoute.page);
   const [selectedId, setSelectedId] = useState(initialRoute.id);
   const [listings, setListings] = useState([]);
@@ -346,27 +357,21 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, isAdmin]);
 
-  // ---------- SEO: title + meta description ----------
+  // ---------- SEO: title, description, canonical address, noindex for members-only pages ----------
+  // (The Edge Function in netlify/ puts the same values in the HTML for Google and link previews.)
   useEffect(() => {
-    const base = "ImmoCongo – Maisons à louer au Katanga";
-    const detailNow = listings.find(l => l.id === selectedId);
-    let title = base;
-    let desc = "Trouvez ou publiez des maisons à louer à Fungurume, Kolwezi, Lubumbashi et environs, au Katanga (RDC).";
-    if (page === "detail" && detailNow) {
-      title = `${detailNow.titre} – ${detailNow.ville} | ImmoCongo`;
-      desc = (detailNow.description || desc).slice(0, 155);
-    } else if (page === "listings") {
-      title = `Annonces – ${base}`;
+    const detailNow = page === "detail" ? listings.find(l => l.id === selectedId) : undefined;
+    if (page === "detail" && !detailNow && loading) return; // listing still loading: keep the page's tags
+    const meta = pageMeta(page, page === "detail" ? detailNow || null : undefined);
+    document.title = meta.title;
+    setHeadTag('meta[name="description"]', () => Object.assign(document.createElement("meta"), { name: "description" }), "content", meta.description);
+    setHeadTag('link[rel="canonical"]', () => Object.assign(document.createElement("link"), { rel: "canonical" }), "href", meta.path ? SITE_URL + meta.path : null);
+    setHeadTag('meta[name="robots"]', () => Object.assign(document.createElement("meta"), { name: "robots" }), "content", meta.noindex ? "noindex" : null);
+    // A listing opened with a short or old address (/annonce/12): show its full address.
+    if (detailNow && window.location.pathname !== meta.path) {
+      window.history.replaceState(window.history.state, "", meta.path + window.location.search);
     }
-    document.title = title;
-    let meta = document.querySelector('meta[name="description"]');
-    if (!meta) {
-      meta = document.createElement("meta");
-      meta.name = "description";
-      document.head.appendChild(meta);
-    }
-    meta.content = desc;
-  }, [page, selectedId, listings]);
+  }, [page, selectedId, listings, loading]);
 
   async function fetchListings() {
     setLoading(true);
@@ -636,7 +641,7 @@ export default function App() {
   }
 
   function shareListing(listing) {
-    const url = `${window.location.origin}${window.location.pathname}#/listing/${listing.id}`;
+    const url = `${window.location.origin}${listingPath(listing)}`;
     if (navigator.share) {
       navigator.share({ title: listing.titre, text: `${listing.titre} — ${listing.prix} ${listing.devise}/mois à ${listing.ville}`, url }).catch(() => {});
     } else if (navigator.clipboard) {
@@ -658,7 +663,7 @@ export default function App() {
     setActivePhoto(0);
     setMenuOpen(false);
     setAuthError("");
-    window.history.pushState({ page: p, id }, "", routeHash(p, id));
+    window.history.pushState({ page: p, id }, "", pathFor(p, id));
     window.scrollTo(0, 0);
   }
 
@@ -907,6 +912,11 @@ export default function App() {
     setSearch("");
     setPriceMin("");
     setPriceMax("");
+  }
+
+  // Address of a page of the site; a listing's address includes its title when the listing is loaded.
+  function pathFor(p, id = null) {
+    return pagePath(p, id, p === "detail" ? listings.find(l => l.id === id) : null);
   }
 
   // Click on a link to a page of the site: open it in the app (a new tab still works with Ctrl/⌘).
@@ -1195,7 +1205,7 @@ export default function App() {
   const cardProps = l => ({
     listing: l,
     S,
-    href: routeHash("detail", l.id),
+    href: listingPath(l),
     onOpen: linkTo("detail", l.id),
     isFav: favorites.has(l.id),
     onToggleFav: () => toggleFavorite(l.id),
@@ -1280,7 +1290,7 @@ export default function App() {
       {/* HEADER — on small screens the links only show when the ☰ menu is open */}
       <nav style={S.nav} aria-label="Menu principal">
         <div style={S.navInner}>
-          <a href="#/" onClick={linkTo("home")} style={S.logo} aria-label="ImmoCongo – accueil">Immo<span style={S.logoSpan}>Congo</span></a>
+          <a href="/" onClick={linkTo("home")} style={S.logo} aria-label="ImmoCongo – accueil">Immo<span style={S.logoSpan}>Congo</span></a>
           <div style={S.navRight}>
           {shownCurrency && (
             <button type="button" className="hov-soft" style={S.curBtn} aria-haspopup="dialog" aria-expanded={currencyOpen} onClick={() => setCurrencyOpen(true)} data-testid="currency-button">
@@ -2021,7 +2031,7 @@ export default function App() {
                       <span style={S.avatar} aria-hidden="true">{initial(activeConversation.buyer_id === currentUser.id ? activeConversation.owner_name : activeConversation.buyer_name)}</span>
                       <div style={{ minWidth: 0 }}>
                         <p style={{ ...S.ownerName, ...S.ellipsis }}>{activeConversation.buyer_id === currentUser.id ? activeConversation.owner_name : activeConversation.buyer_name}</p>
-                        <a href={routeHash("detail", activeConversation.listing_id)} onClick={linkTo("detail", activeConversation.listing_id)} className="hov-link" style={{ display: "block", fontSize: 14, color: C.muted, textDecoration: "none", ...S.ellipsis }}>
+                        <a href={pathFor("detail", activeConversation.listing_id)} onClick={linkTo("detail", activeConversation.listing_id)} className="hov-link" style={{ display: "block", fontSize: 14, color: C.muted, textDecoration: "none", ...S.ellipsis }}>
                           {activeConversation.listing_title}
                         </a>
                       </div>
@@ -2116,7 +2126,7 @@ export default function App() {
       <footer style={S.footer}>
         <div style={S.footerInner}>
           <div>
-            <a href="#/" onClick={linkTo("home")} style={{ ...S.logo, fontSize: 20 }}>Immo<span style={S.logoSpan}>Congo</span></a>
+            <a href="/" onClick={linkTo("home")} style={{ ...S.logo, fontSize: 20 }}>Immo<span style={S.logoSpan}>Congo</span></a>
             <p style={{ margin: "10px 0 0", maxWidth: 340, lineHeight: 1.55 }}>Maisons et appartements à louer à Fungurume, Kolwezi, Lubumbashi et environs.</p>
           </div>
           <div>

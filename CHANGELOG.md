@@ -2,6 +2,17 @@
 
 Newest first. Written for Junior: what changed for visitors and owners.
 
+## 2026-10-12 — Found on Google, nice previews on WhatsApp (preview)
+- **Real page addresses.** Pages now have short, readable French addresses instead of "#/": for example `/annonces`, `/annonce/12-maison-2-chambres-fungurume`, `/connexion`, `/publier`, `/favoris`, `/messages`, `/mes-annonces`. Google can only list pages that have their own address, so this was needed first.
+- **Old links still work.** Links people already shared (with "#/") open the right page and the address changes to the new one by itself. Reloading a page, and the phone's back and forward buttons, work as before.
+- **Link previews on WhatsApp and Facebook.** When someone shares a listing, the message now shows the first photo, the title, the price per month, the town and the number of rooms. The home page and the listings page show a picture with the ImmoCongo logo and "Maisons à louer au Katanga".
+- **The "Partager" button** on a listing now shares the new address.
+- **Google basics.** Every page has its own title and description in French (for example "Maison 3 chambres – Fungurume | ImmoCongo"). Google gets a list of all available listings (`/sitemap.xml`, updated by itself) and a `/robots.txt` file. Members-only pages (login, publish, favourites, messages, my listings, admin) are kept out of Google. Each listing also tells Google in its own language that it is a rental, with its price, town and rooms.
+- On a slow connection, a listing page now shows its title, price and description as simple text while the site is still loading, instead of a white page. The rest of the site looks exactly the same.
+- A listing that was deleted now tells Google "this page doesn't exist any more", so it disappears from Google.
+- Nothing changes in the database.
+- Automatic tests: 77 passed (16 new: the new addresses, old "#/" links, reloading a page, back and forward, titles and descriptions, members-only pages kept out of Google, and the link previews and sitemap checked with fake data).
+
 ## 2026-10-12 — Design refresh (live)
 - **A new, cleaner look for the whole site**, in the "clean & airy" style Junior chose: white pages, big photos, rounded corners, lots of space. The navy + green colours and the Immo**Congo** logo stay: navy for titles and text, green for the main buttons.
 - **Home page:** it now opens with a big search over a drawing of Katanga houses at dusk. You choose the town, the maximum price and the number of rooms, tap "Rechercher", and you land directly on the matching listings. Below: the latest listings, "Comment ça marche ?" in 3 steps, an invitation for landlords to publish for free, and a footer with the WhatsApp contact (now on every page).

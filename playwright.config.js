@@ -32,12 +32,12 @@ export default defineConfig({
     serviceWorkers: "block",
   },
   projects: [
-    // Database rules checked straight through supabase-js (no browser).
-    { name: "api", testMatch: /security\.spec\.js/ },
+    // No browser: database rules checked straight through supabase-js, and the Edge Function (link previews, sitemap) with fake data.
+    { name: "api", testMatch: /(security|seo-edge)\.spec\.js/ },
     // Every browser test at phone size (375px)...
-    { name: "phone", testIgnore: /security\.spec\.js/, use: phone },
+    { name: "phone", testIgnore: /(security|seo-edge)\.spec\.js/, use: phone },
     // ...and the ones where the desktop layout matters (tagged @desktop) at computer size.
-    { name: "desktop", testIgnore: /security\.spec\.js/, grep: /@desktop/, use: desktop },
+    { name: "desktop", testIgnore: /(security|seo-edge)\.spec\.js/, grep: /@desktop/, use: desktop },
   ],
   webServer: {
     command: "node scripts/e2e/serve.mjs",
