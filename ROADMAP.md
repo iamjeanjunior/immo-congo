@@ -25,7 +25,15 @@ The best real-estate website, starting in Fungurume and Katanga, then all of DR 
 - [x] **Fix: accounts without a profile can't publish.** The app now creates a missing profile before publishing (clear French message if it still fails), and the database creates the profile on signup (trigger `on_auth_user_created`). (2026-10-12)
 - [x] **Fix: an admin editing someone else's listing becomes its owner.** Editing no longer sends `owner_id` / `owner_name`. (2026-10-12)
 - [x] **Security: only admins can change a profile's role or verified badge** (trigger `protect_profile_privileges`). (2026-10-12)
-- [~] **Automatic testing, so Junior rarely has to test by hand.** A local copy of Supabase on Junior's laptop (Supabase CLI + Docker Desktop) with test accounts, and automatic browser tests (signup, login, publish with photos, edit, delete, admin, messages) that run before every preview. Junior then only looks at visual changes on a phone.
+- [x] **Automatic testing, so Junior rarely has to test by hand.** Local copy of Supabase (Supabase CLI + Docker Desktop) with test accounts, and 39 automatic browser and database tests; run with `npm run test:e2e` before every preview. (2026-10-12)
+- [ ] **Trust fixes** (found by the automatic tests; do before promoting the site):
+  - Names shown on listings and reviews come from the author's profile in the database, not from what the browser sends.
+  - Only the view counter (`increment_views`) can change a listing's view count, not its owner.
+  - Conversations can only be started with the real owner of an existing listing.
+  - Messages and reviews sent right after the page opens are signed with the real name (wait for the profile), not "Utilisateur".
+  - Admin can delete other users' photo files when deleting or editing their listing (today they stay in Storage; the test is marked as a known bug).
+  - Visitor on "Mes annonces" (`#/my-listings`) is asked to log in instead of seeing "Vous n'avez pas encore d'annonces".
+- [ ] Update outdated developer packages (`npm audit` reports 6 issues in vite / eslint dependencies; not visible to visitors).
 - [ ] **Browse without an account:** check that a visitor can see every listing and listing page without logging in; ask for login only to favourite, review, message or publish, with a clear French message explaining why.
 - [ ] **Design refresh:** home page, listing cards and listing page look modern and trustworthy (good photos first, clear price, town and neighbourhood, verified owner badge).
 - [ ] **Split `src/App.jsx`** (~1,260 lines) into smaller files (pages and components). Needed before several agents can work on the code at the same time.
@@ -63,7 +71,6 @@ Start charging only once there are enough listings and visitors. Prices to decid
 - 🧑 Decide what to do with Junior's second login account (no profile): delete it, or give it a profile.
 - 🧑 Delete the leftover "migrate-listing-photos" Edge Function in the Supabase dashboard (it's already switched off).
 - After 2026-11-09, if all is well: drop the temporary table `listing_photos_backup` (backup of the old photos).
-- Admin rule to delete other users' photo files (today, when an admin deletes someone's listing, its photo files stay in Storage).
 - Report a fake or already-rented listing.
 - Owner phone verification.
 - Map view of all listings.
