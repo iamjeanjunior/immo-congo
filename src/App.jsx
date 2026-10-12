@@ -173,6 +173,8 @@ export default function App() {
 
   const isAdmin = profile?.role === "admin";
   const isMobile = useMediaQuery("(max-width: 640px)");
+  // Tablets: one column on the listing page, search and filters on several rows.
+  const isNarrow = useMediaQuery("(max-width: 900px)");
   // Logged-in users have up to 7 menu links (~860px), so they get the ☰ menu on tablets too.
   const compactNav = useMediaQuery(currentUser ? "(max-width: 960px)" : "(max-width: 640px)");
 
@@ -941,16 +943,16 @@ export default function App() {
     heroEyebrow: { margin: "0 0 12px", fontSize: 13, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "#86efac" },
     heroTitle: { margin: "0 auto 12px", maxWidth: 760, fontSize: isMobile ? 30 : 52, fontWeight: 800, lineHeight: 1.12, letterSpacing: "-0.025em", textWrap: "balance" },
     heroSub: { margin: isMobile ? "0 0 24px" : "0 0 36px", fontSize: isMobile ? 16 : 19, color: "rgba(255, 255, 255, 0.86)" },
-    searchBox: isMobile
-      ? { display: "grid", gap: 10, background: "#fff", borderRadius: 20, padding: 14, boxShadow: "0 20px 48px rgba(5, 18, 45, 0.35)", textAlign: "left" }
+    searchBox: isNarrow
+      ? { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, minmax(0, 1fr))", gap: 10, background: "#fff", borderRadius: 20, padding: 14, boxShadow: "0 20px 48px rgba(5, 18, 45, 0.35)", textAlign: "left", maxWidth: 720, margin: "0 auto" }
       : { display: "flex", alignItems: "center", background: "#fff", borderRadius: 999, padding: 8, boxShadow: "0 20px 48px rgba(5, 18, 45, 0.35)", textAlign: "left", maxWidth: 880, margin: "0 auto" },
-    searchCell: isMobile
-      ? { border: `1px solid ${C.field}`, borderRadius: 14, padding: "8px 14px" }
+    searchCell: isNarrow
+      ? { border: `1px solid ${C.field}`, borderRadius: 14, padding: "8px 14px", minWidth: 0 }
       : { flex: "1 1 0", minWidth: 0, padding: "6px 24px", borderRadius: 999 },
     searchDivider: { width: 1, height: 36, background: C.line, flexShrink: 0 },
     searchLabel: { display: "block", fontSize: 12, fontWeight: 700, color: C.navy, letterSpacing: "0.02em", cursor: "pointer" },
     searchControl: { width: "100%", border: "none", backgroundColor: "transparent", padding: "2px 0", fontSize: 16, color: C.ink, minHeight: 30, fontFamily: "inherit" },
-    searchBtn: { ...btn, background: C.green, color: "#fff", minHeight: isMobile ? 52 : 56, borderRadius: isMobile ? 14 : 999, padding: "0 28px", fontSize: 16, flexShrink: 0 },
+    searchBtn: { ...btn, background: C.green, color: "#fff", minHeight: isNarrow ? 52 : 56, borderRadius: isNarrow ? 14 : 999, padding: "0 28px", fontSize: 16, flexShrink: 0, gridColumn: isNarrow ? "1 / -1" : "auto" },
     trust: { position: "relative", marginTop: isMobile ? -40 : -52, display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", background: "#fff", borderRadius: 20, boxShadow: "0 10px 30px rgba(10, 31, 71, 0.12)", border: `1px solid ${C.line}`, padding: isMobile ? "14px 0" : "22px 0" },
     trustItem: { display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: "center", justifyContent: "center", gap: isMobile ? 6 : 14, textAlign: isMobile ? "center" : "left", padding: "0 8px", minWidth: 0 },
     trustIcon: { width: isMobile ? 36 : 48, height: isMobile ? 36 : 48, borderRadius: "50%", background: C.greenSoft, color: C.green, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 },
@@ -980,7 +982,7 @@ export default function App() {
     searchWrap: { position: "relative", flex: 1, minWidth: 0 },
     searchIcon: { position: "absolute", left: 14, top: 14, color: C.muted, pointerEvents: "none" },
     filterToggle: { ...btn, minHeight: 48, flexShrink: 0, padding: "0 14px", background: "#fff", color: C.navy, border: `1px solid ${C.field}` },
-    filterGrid: { display: "grid", gridTemplateColumns: isMobile ? "repeat(2, minmax(0, 1fr))" : "repeat(6, minmax(0, 1fr))", gap: isMobile ? 10 : 12, marginTop: 12 },
+    filterGrid: { display: "grid", gridTemplateColumns: isMobile ? "repeat(2, minmax(0, 1fr))" : isNarrow ? "repeat(3, minmax(0, 1fr))" : "repeat(6, minmax(0, 1fr))", gap: isMobile ? 10 : 12, marginTop: 12 },
     filterLabel: { display: "block", fontSize: 13, fontWeight: 600, color: C.muted, marginBottom: 4 },
     resultsBar: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, margin: isMobile ? "16px 0 18px" : "20px 0 24px", minHeight: 28 },
     grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: isMobile ? 28 : "36px 24px" },
@@ -1017,7 +1019,7 @@ export default function App() {
     dots: { position: "absolute", left: 0, right: 0, bottom: 16, display: "flex", justifyContent: "center", gap: 6, pointerEvents: "none" },
     thumbs: { display: "flex", gap: 10, marginTop: 12, overflowX: "auto", paddingBottom: 4 },
     thumb: { flex: "0 0 auto", width: 96, height: 72, padding: 0, borderRadius: 12, overflow: "hidden", background: "none" },
-    detailLayout: isMobile ? { marginTop: 20 } : { display: "grid", gridTemplateColumns: "minmax(0, 1fr) 360px", gap: 56, alignItems: "start", marginTop: 32 },
+    detailLayout: isNarrow ? { marginTop: isMobile ? 20 : 28 } : { display: "grid", gridTemplateColumns: "minmax(0, 1fr) 360px", gap: 56, alignItems: "start", marginTop: 32 },
     detailTitle: { margin: 0, fontSize: isMobile ? 25 : 32, fontWeight: 800, color: C.navy, letterSpacing: "-0.02em", lineHeight: 1.2 },
     detailLoc: { display: "flex", alignItems: "flex-start", gap: 6, margin: "8px 0 0", fontSize: 16, color: C.muted },
     detailRating: { display: "flex", alignItems: "center", gap: 6, margin: "6px 0 0", fontSize: 15, color: C.ink },
@@ -1119,12 +1121,33 @@ export default function App() {
     </div>
   );
 
-  const statusBadge = disponible => (
+  // Price, owner and contact buttons: a column on the right on computers, under the title on tablets.
+  const contactCard = detail && (
+    <div style={S.asideCard}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <p style={S.bigPrice}>{formatPrice(detail.prix)} <span style={S.priceUnit}>{detail.devise}/mois</span></p>
+        {statusBadge(detail.disponible)}
+      </div>
+      {ownerCard}
+      <a href={whatsappHref} target="_blank" rel="noreferrer" className="hov-dim" style={{ ...S.btnPrimary, ...S.btnLg }}>
+        <Icon name="whatsapp" size={22} />Contacter sur WhatsApp
+      </a>
+      {showMessageBtn && (
+        <button className="hov-soft" style={{ ...S.btnSecondary, ...S.btnLg }} onClick={() => startConversation(detail)}>
+          <Icon name="message" size={20} />Message au propriétaire
+        </button>
+      )}
+    </div>
+  );
+
+  function statusBadge(disponible) {
+    return (
     <span style={{ ...S.statusBadge, ...(disponible ? S.statusOn : S.statusOff) }}>
       <span style={{ ...S.dot, background: disponible ? C.greenBright : "#ef4444" }} />
       {disponible ? "Disponible" : "Occupée"}
     </span>
-  );
+    );
+  }
 
   return (
     <div style={S.root}>
@@ -1226,12 +1249,12 @@ export default function App() {
                       {VILLES.map(v => <option key={v}>{v}</option>)}
                     </select>
                   </div>
-                  {!isMobile && <span style={S.searchDivider} />}
+                  {!isNarrow && <span style={S.searchDivider} />}
                   <div className="search-cell" style={S.searchCell}>
                     <label htmlFor="home-prix" style={S.searchLabel}>Prix max par mois</label>
                     <input id="home-prix" name="prixMax" type="number" inputMode="numeric" min="0" placeholder="Ex : 500" defaultValue={priceMax} className="search-control" style={S.searchControl} />
                   </div>
-                  {!isMobile && <span style={S.searchDivider} />}
+                  {!isNarrow && <span style={S.searchDivider} />}
                   <div className="search-cell" style={S.searchCell}>
                     <label htmlFor="home-chambres" style={S.searchLabel}>Chambres</label>
                     <select id="home-chambres" name="chambres" defaultValue={filterChambres} className="search-control" style={S.searchControl}>
@@ -1350,7 +1373,7 @@ export default function App() {
                     <div>
                       <label htmlFor="f-ville" style={S.filterLabel}>Ville</label>
                       <select id="f-ville" className="field" style={S.field} value={filterVille} onChange={e => setFilterVille(e.target.value)}>
-                        <option value="Toutes">Toutes les villes</option>
+                        <option value="Toutes">Toutes</option>
                         {VILLES.map(v => <option key={v}>{v}</option>)}
                       </select>
                     </div>
@@ -1453,6 +1476,8 @@ export default function App() {
                     <button className="hov-soft" style={{ ...S.btnSecondary, ...S.btnSm }} onClick={() => shareListing(detail)}><Icon name="share" size={18} />Partager</button>
                   </div>
 
+                  {isNarrow && !isMobile && <div style={{ marginTop: 24 }} aria-label="Contacter le propriétaire" role="region">{contactCard}</div>}
+
                   {canEdit && (
                     <div style={S.ownerTools} data-testid="owner-tools">
                       <p style={{ margin: 0, fontSize: 15, fontWeight: 600, color: C.ink }}>Vous gérez cette annonce</p>
@@ -1543,23 +1568,9 @@ export default function App() {
                   </section>
                 </div>
 
-                {!isMobile && (
+                {!isNarrow && (
                   <aside style={S.aside} aria-label="Contacter le propriétaire">
-                    <div style={S.asideCard}>
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-                        <p style={S.bigPrice}>{formatPrice(detail.prix)} <span style={S.priceUnit}>{detail.devise}/mois</span></p>
-                        {statusBadge(detail.disponible)}
-                      </div>
-                      {ownerCard}
-                      <a href={whatsappHref} target="_blank" rel="noreferrer" className="hov-dim" style={{ ...S.btnPrimary, ...S.btnLg }}>
-                        <Icon name="whatsapp" size={22} />Contacter sur WhatsApp
-                      </a>
-                      {showMessageBtn && (
-                        <button className="hov-soft" style={{ ...S.btnSecondary, ...S.btnLg }} onClick={() => startConversation(detail)}>
-                          <Icon name="message" size={20} />Message au propriétaire
-                        </button>
-                      )}
-                    </div>
+                    {contactCard}
                   </aside>
                 )}
               </div>
