@@ -1,10 +1,36 @@
 import { useState, useEffect, useRef, useCallback, useSyncExternalStore } from "react";
 import { createClient } from "@supabase/supabase-js";
+import { PHOTO_BUCKET, MAX_PHOTOS, listingPhotos, storagePathFromUrl, checkPhotoFile, compressPhoto } from "./photos.js";
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
   import.meta.env.VITE_SUPABASE_ANON_KEY
 );
+
+// Uploads one shrunk photo into the user's own Storage folder. Returns its public URL.
+async function uploadPhoto(userId, blob) {
+  const ext = blob.type === "image/webp" ? "webp" : "jpg";
+  const path = `${userId}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${ext}`;
+  const { error } = await supabase.storage.from(PHOTO_BUCKET).upload(path, blob, {
+    contentType: blob.type,
+    cacheControl: "31536000",
+    upsert: false,
+  });
+  if (error) throw error;
+  return supabase.storage.from(PHOTO_BUCKET).getPublicUrl(path).data.publicUrl;
+}
+
+// Best effort: deletes our Storage files behind these photo URLs. Never throws;
+// old base64 photos and other links are simply skipped.
+async function removeStoredPhotos(urls) {
+  const paths = urls.map(storagePathFromUrl).filter(Boolean);
+  if (!paths.length) return;
+  try {
+    await supabase.storage.from(PHOTO_BUCKET).remove(paths);
+  } catch {
+    // ignore: a leftover file must never block saving or deleting a listing
+  }
+}
 
 const VILLES = ["Fungurume", "Kolwezi", "Lubumbashi", "Likasi", "Kipushi", "Autre"];
 const PAGE_SIZE = 9;
@@ -63,7 +89,11 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [editId, setEditId] = useState(null);
+  // Photos in the publish form: { src, blob }. blob is set for new photos (not uploaded yet);
+  // existing photos only have src (Storage URL or old base64).
   const [images, setImages] = useState([]);
+  const [preparingPhotos, setPreparingPhotos] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState("");
   const [activePhoto, setActivePhoto] = useState(0);
   const [postForm, setPostForm] = useState(DEFAULT_POST_FORM);
   const [favorites, setFavorites] = useState(new Set());
@@ -459,26 +489,67 @@ export default function App() {
     nav("home");
   }
 
+  // New photos are checked and shrunk on the phone right away; they are uploaded when the listing is saved.
   async function handleImagesChange(e) {
-    const files = Array.from(e.target.files);
-    if (files.length + images.length > 6) { showToast("Maximum 6 photos.", "error"); return; }
-    for (const file of files) {
-      if (file.size > 3 * 1024 * 1024) { showToast(`${file.name} trop grande (max 3 Mo).`, "error"); continue; }
-      const reader = new FileReader();
-      reader.onload = ev => setImages(prev => [...prev, ev.target.result]);
-      reader.readAsDataURL(file);
+    const files = Array.from(e.target.files || []);
+    e.target.value = ""; // lets the user pick the same photo again after removing it
+    if (!files.length) return;
+    const room = MAX_PHOTOS - images.length;
+    if (room <= 0) { showToast(`Maximum ${MAX_PHOTOS} photos.`, "error"); return; }
+    if (files.length > room) showToast(`Maximum ${MAX_PHOTOS} photos : les photos en trop n'ont pas été ajoutées.`, "error");
+    setPreparingPhotos(true);
+    const added = [];
+    for (const file of files.slice(0, room)) {
+      const problem = checkPhotoFile(file);
+      if (problem) { showToast(problem, "error"); continue; }
+      try {
+        const blob = await compressPhoto(file);
+        added.push({ src: URL.createObjectURL(blob), blob });
+      } catch (err) {
+        showToast(err.message || `Impossible de lire « ${file.name} ».`, "error");
+      }
     }
+    if (added.length) setImages(prev => [...prev, ...added].slice(0, MAX_PHOTOS));
+    setPreparingPhotos(false);
   }
 
   function removeImage(index) {
+    const photo = images[index];
+    if (photo?.blob) URL.revokeObjectURL(photo.src);
     setImages(prev => prev.filter((_, i) => i !== index));
-    if (activePhoto >= index && activePhoto > 0) setActivePhoto(activePhoto - 1);
+  }
+
+  function clearFormPhotos() {
+    images.forEach(p => { if (p.blob) URL.revokeObjectURL(p.src); });
+    setImages([]);
   }
 
   async function handlePost(e) {
     e.preventDefault();
     if (!currentUser) { nav("auth"); return; }
+    if (preparingPhotos) return;
     setSubmitting(true);
+
+    // 1. Upload the new photos first. If one fails, nothing is saved and the form stays as it is.
+    const newPhotos = images.filter(p => p.blob);
+    const uploadedUrls = new Map();
+    try {
+      for (let i = 0; i < newPhotos.length; i++) {
+        setUploadStatus(`Envoi des photos… ${i + 1}/${newPhotos.length}`);
+        uploadedUrls.set(newPhotos[i], await uploadPhoto(currentUser.id, newPhotos[i].blob));
+      }
+    } catch {
+      removeStoredPhotos([...uploadedUrls.values()]);
+      setUploadStatus("");
+      setSubmitting(false);
+      showToast("Échec de l'envoi des photos. Vérifiez votre connexion puis réessayez.", "error");
+      return;
+    }
+
+    // 2. Save the listing with photo URLs (existing photos keep their URL or old base64).
+    setUploadStatus("Enregistrement…");
+    const photoUrls = images.map(p => uploadedUrls.get(p) || p.src);
+    const previousPhotos = editId ? listingPhotos(listings.find(l => l.id === editId)) : [];
     const listing = {
       titre: postForm.titre,
       prix: parseFloat(postForm.prix),
@@ -489,8 +560,8 @@ export default function App() {
       description: postForm.description,
       whatsapp: postForm.whatsapp || profile?.whatsapp || "",
       disponible: postForm.disponible === "true",
-      image_url: images[0] || null,
-      images: JSON.stringify(images),
+      image_url: photoUrls[0] || null,
+      images: JSON.stringify(photoUrls),
       owner_id: currentUser.id,
       owner_name: profile?.nom || "Propriétaire",
     };
@@ -498,6 +569,8 @@ export default function App() {
       if (editId) {
         const { error } = await supabase.from("listings").update(listing).eq("id", editId);
         if (error) throw error;
+        // Photos removed while editing: delete their files (best effort, never blocks).
+        removeStoredPhotos(previousPhotos.filter(src => !photoUrls.includes(src)));
         showToast("Annonce modifiée !");
         setEditId(null);
       } else {
@@ -507,20 +580,25 @@ export default function App() {
       }
       await fetchListings();
       setPostForm(DEFAULT_POST_FORM);
-      setImages([]);
+      clearFormPhotos();
       nav("listings");
     } catch {
+      // The listing was not saved: remove the photos we just uploaded so nothing is left half-done.
+      removeStoredPhotos([...uploadedUrls.values()]);
       showToast(editId ? "Erreur lors de la modification." : "Erreur lors de la publication.", "error");
     } finally {
+      setUploadStatus("");
       setSubmitting(false);
     }
   }
 
   async function deleteListing(id) {
     if (!confirm("Supprimer cette annonce ?")) return;
+    const photos = listingPhotos(listings.find(l => l.id === id));
     try {
       const { error } = await supabase.from("listings").delete().eq("id", id);
       if (error) throw error;
+      removeStoredPhotos(photos);
       await fetchListings();
       showToast("Annonce supprimée.");
       if (page === "detail") nav("listings");
@@ -537,7 +615,8 @@ export default function App() {
       chambres: listing.chambres || "", description: listing.description,
       whatsapp: listing.whatsapp || "", disponible: listing.disponible ? "true" : "false",
     });
-    try { setImages(JSON.parse(listing.images || "[]")); } catch { setImages(listing.image_url ? [listing.image_url] : []); }
+    clearFormPhotos();
+    setImages(listingPhotos(listing).map(src => ({ src, blob: null })));
     nav("post");
   }
 
@@ -566,7 +645,7 @@ export default function App() {
   const favoriteListings = listings.filter(l => favorites.has(l.id));
   const detail = listings.find(l => l.id === selectedId);
   const canEdit = detail && currentUser && (detail.owner_id === currentUser.id || profile?.role === "admin");
-  const detailPhotos = (() => { try { return JSON.parse(detail?.images || "[]"); } catch { return detail?.image_url ? [detail.image_url] : []; } })();
+  const detailPhotos = listingPhotos(detail);
   const avgRating = reviews.length ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length : 0;
   const relatedListings = detail ? listings.filter(l => l.id !== detail.id && l.ville === detail.ville).slice(0, 3) : [];
 
@@ -681,7 +760,7 @@ export default function App() {
             {currentUser ? (
               <>
                 <button style={S.navBtn} onClick={() => nav("my-listings")}>Mes annonces</button>
-                <button style={S.navBtnPrimary} onClick={() => { setEditId(null); setPostForm(DEFAULT_POST_FORM); setImages([]); nav("post"); }}>+ Publier</button>
+                <button style={S.navBtnPrimary} onClick={() => { setEditId(null); setPostForm(DEFAULT_POST_FORM); clearFormPhotos(); nav("post"); }}>+ Publier</button>
                 <button style={S.navBtn} onClick={logout}>Déconnexion</button>
               </>
             ) : (
@@ -1014,21 +1093,29 @@ export default function App() {
                   </div>
 
                   <div style={S.formGroup}>
-                    <label style={S.label}>Photos de la maison (max 6)</label>
-                    <input type="file" accept="image/*" multiple onChange={handleImagesChange} style={{ fontSize: 14, maxWidth: "100%" }} />
+                    <label style={S.label}>Photos de la maison (max {MAX_PHOTOS})</label>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      onChange={handleImagesChange}
+                      disabled={preparingPhotos || submitting || images.length >= MAX_PHOTOS}
+                      style={{ fontSize: 14, maxWidth: "100%" }}
+                    />
+                    {preparingPhotos && <p style={{ fontSize: 13, color: "#0369a1", margin: "8px 0 0", fontWeight: 600 }}>⏳ Préparation des photos…</p>}
                     {images.length > 0 && (
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
                         {images.map((img, i) => (
                           <div key={i} style={{ position: "relative" }}>
-                            <img src={img} alt="" style={{ width: 90, height: 70, objectFit: "cover", borderRadius: 6 }} />
+                            <img src={img.src} alt="" style={{ width: 90, height: 70, objectFit: "cover", borderRadius: 6, display: "block" }} />
                             {i === 0 && <span style={{ position: "absolute", top: 2, left: 2, background: "#0d2f6e", color: "#fff", fontSize: 10, padding: "1px 5px", borderRadius: 4 }}>principale</span>}
-                            <button type="button" onClick={() => removeImage(i)}
+                            <button type="button" onClick={() => removeImage(i)} disabled={submitting} aria-label="Retirer cette photo"
                               style={{ position: "absolute", top: 2, right: 2, background: "#ef4444", color: "#fff", border: "none", borderRadius: "50%", width: 18, height: 18, fontSize: 11, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
                           </div>
                         ))}
                       </div>
                     )}
-                    <p style={{ fontSize: 12, color: "#6b7280", margin: "6px 0 0" }}>La première photo sera la photo principale. Max 3 Mo par photo.</p>
+                    <p style={{ fontSize: 12, color: "#6b7280", margin: "6px 0 0" }}>La première photo sera la photo principale. Les photos sont réduites automatiquement pour charger vite (JPG, PNG ou WebP).</p>
                   </div>
 
                   <div style={S.formGroup}>
@@ -1038,8 +1125,8 @@ export default function App() {
                       <option value="false">🔴 Occupée</option>
                     </select>
                   </div>
-                  <button type="submit" style={{ ...S.submitBtn, opacity: submitting ? 0.7 : 1 }} disabled={submitting}>
-                    {submitting ? "En cours..." : editId ? "Enregistrer" : "Publier l'annonce"}
+                  <button type="submit" style={{ ...S.submitBtn, opacity: submitting || preparingPhotos ? 0.7 : 1 }} disabled={submitting || preparingPhotos}>
+                    {submitting ? (uploadStatus || "En cours...") : preparingPhotos ? "Préparation des photos…" : editId ? "Enregistrer" : "Publier l'annonce"}
                   </button>
                   {editId && <button type="button" style={{ ...S.backBtn, width: "100%", marginTop: 10, textAlign: "center" }} onClick={() => { setEditId(null); nav("my-listings"); }}>Annuler</button>}
                 </form>
@@ -1199,8 +1286,8 @@ export default function App() {
 }
 
 function ListingCard({ listing, onClick, S, isFav, onToggleFav }) {
-  const photos = (() => { try { return JSON.parse(listing.images || "[]"); } catch { return listing.image_url ? [listing.image_url] : []; } })();
-  const mainPhoto = photos[0] || listing.image_url;
+  const photos = listingPhotos(listing);
+  const mainPhoto = photos[0];
   return (
     <div style={S.card} className="listing-card">
       <div style={{ position: "relative" }} onClick={onClick}>
