@@ -64,3 +64,11 @@ insert into public.reviews (listing_id, user_id, reviewer_name, rating, comment)
 select l.id, '22222222-2222-4222-8222-222222222222', 'Alice Proprio', 4, 'Belle maison, propriétaire sérieux.'
 from public.listings l
 where l.titre = 'Maison 3 chambres – Gécamines';
+
+-- 5. Exchange rates (fixed, so the tests never need the internet): 1 USD = 2 500 CDF = 0,8 EUR = 18 ZAR = 25 ZMW.
+-- On the real site the Edge Function update-exchange-rate writes the day's rate here.
+insert into public.exchange_rates (base, quote, rate, source, source_updated_at, updated_at) values
+  ('USD', 'CDF', 2500, 'test', now(), now()),
+  ('USD', 'EUR', 0.8, 'test', now(), now()),
+  ('USD', 'ZAR', 18, 'test', now(), now()),
+  ('USD', 'ZMW', 25, 'test', now(), now());

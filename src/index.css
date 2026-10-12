@@ -191,6 +191,20 @@ select.search-control {
   animation: slideDown 0.2s ease;
 }
 
+/* Currency sheet on phones slides up from the bottom; prices fade in softly after a currency change. */
+.sheet-panel {
+  animation: slideUp 0.22s ease;
+}
+
+.price-fade {
+  animation: fadeIn 0.25s ease;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to { transform: none; }
+}
+
 @keyframes shimmer {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }

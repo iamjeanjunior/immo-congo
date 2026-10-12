@@ -33,7 +33,7 @@ test("pas de défilement horizontal à 375px sur les pages principales", async (
   await expectNoSideScroll(page, "visitor menu open");
   await open(page, "listings");
   await openFilters(page);
-  await expect(page.getByLabel("Prix max", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Prix max en USD")).toBeVisible();
   await expectNoSideScroll(page, "listings filters open");
 
   // Logged-in pages.

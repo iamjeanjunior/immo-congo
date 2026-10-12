@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { PHOTO_BUCKET, MAX_PHOTOS, listingPhotos, storagePathFromUrl, checkPhotoFile, compressPhoto } from "./photos.js";
 import Icon from "./Icon.jsx";
 import ConfirmDialog from "./ConfirmDialog.jsx";
+import CurrencySheet from "./CurrencySheet.jsx";
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
@@ -54,8 +55,60 @@ const C = {
   soft: "#f5f7fa", green: "#15803d", greenBright: "#16a34a", greenSoft: "#ecfdf3", red: "#dc2626", amber: "#f59e0b",
 };
 
-function formatPrice(prix) {
-  return Number(prix || 0).toLocaleString("fr-FR");
+// ---------- Currencies ----------
+// Visitors choose the currency prices are shown in (remembered on the device, USD by default).
+// Listings keep the currency their owner chose; prices are converted with the day's rate from our own
+// table `exchange_rates` (filled once a day by the Edge Function update-exchange-rate).
+const CURRENCY_INFO = {
+  USD: { symbol: "$", name: "Dollar américain" },
+  CDF: { symbol: "FC", name: "Franc congolais" },
+  EUR: { symbol: "€", name: "Euro" },
+  ZAR: { symbol: "R", name: "Rand sud-africain" },
+  ZMW: { symbol: "K", name: "Kwacha zambien" },
+};
+const CURRENCY_GROUPS = [["Les plus utilisées", ["USD", "CDF"]], ["Autres devises", ["EUR", "ZAR", "ZMW"]]];
+const CURRENCY_KEY = "immocongo.devise";
+const MONEY = new Intl.NumberFormat("fr", { maximumFractionDigits: 2 });
+
+function readSavedCurrency() {
+  try {
+    const saved = localStorage.getItem(CURRENCY_KEY);
+    return CURRENCY_INFO[saved] ? saved : "USD";
+  } catch {
+    return "USD"; // storage blocked (private browsing...): default currency
+  }
+}
+
+function currencySymbol(code) {
+  return CURRENCY_INFO[code]?.symbol || code;
+}
+
+// "200 000 FC", "70 $", "64 €" (French spacing; the symbol never goes to the next line).
+function formatMoney(amount, code) {
+  return `${MONEY.format(Number(amount) || 0)}\u00a0${currencySymbol(code)}`;
+}
+
+function saveCurrency(currency) {
+  try {
+    localStorage.setItem(CURRENCY_KEY, currency);
+  } catch {
+    // storage blocked: the choice just isn't remembered
+  }
+}
+
+// amount in `from` → amount in `to`, or null if a rate is missing. rates = { USD: 1, CDF: 2300, ZAR: 16.5 }.
+function convertPrice(amount, from, to, rates) {
+  if (from === to) return amount;
+  if (!rates || !rates[from] || !rates[to]) return null;
+  return (amount / rates[from]) * rates[to];
+}
+
+// Converted prices are rounded so they read well: whole dollars / euros..., and francs to the
+// nearest 500 FC (or 1 000 FC from 100 000 FC).
+function roundPrice(value, currency) {
+  if (currency !== "CDF") return Math.round(value);
+  const rounded = Math.round(value / (value >= 100000 ? 1000 : 500)) * (value >= 100000 ? 1000 : 500);
+  return rounded > 0 ? rounded : Math.round(value);
 }
 
 function formatDate(iso) {
@@ -72,10 +125,6 @@ function formatTime(iso) {
 
 function initial(name) {
   return (String(name || "").trim().charAt(0) || "?").toUpperCase();
-}
-
-function plural(n, one, many) {
-  return n === 1 ? one : many;
 }
 
 // Supabase answers in English: show the common signup problems in French.
@@ -167,6 +216,10 @@ export default function App() {
   // The site's confirmation window: { title, message, confirmLabel, danger, resolve } or null.
   const [confirmState, setConfirmState] = useState(null);
   const [authError, setAuthError] = useState("");
+  // Display currency and the day's exchange rates: { rates: { USD: 1, CDF, EUR, ZAR, ZMW }, updatedAt } or null.
+  const [currency, setCurrency] = useState(readSavedCurrency);
+  const [fx, setFx] = useState(null);
+  const [currencyOpen, setCurrencyOpen] = useState(false);
   const viewedRef = useRef(new Set());
   const toastTimerRef = useRef(null);
   const chatScrollRef = useRef(null);
@@ -175,8 +228,9 @@ export default function App() {
   const isMobile = useMediaQuery("(max-width: 640px)");
   // Tablets: one column on the listing page, search and filters on several rows.
   const isNarrow = useMediaQuery("(max-width: 900px)");
-  // Logged-in users have up to 7 menu links (~860px), so they get the ☰ menu on tablets too.
-  const compactNav = useMediaQuery(currentUser ? "(max-width: 960px)" : "(max-width: 640px)");
+  // Logged-in users have up to 7 menu links (~860px) plus the USD / CDF switch, so they get the ☰ menu
+  // on tablets and small laptops too.
+  const compactNav = useMediaQuery(currentUser ? "(max-width: 1100px)" : "(max-width: 760px)");
 
   // ---------- auth + listings bootstrap ----------
   useEffect(() => {
@@ -191,6 +245,7 @@ export default function App() {
     });
     fetchListings();
     fetchVerifiedOwners();
+    fetchExchangeRates();
     return () => subscription.unsubscribe();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -356,6 +411,40 @@ export default function App() {
     } catch {
       setVerifiedOwners(new Set());
     }
+  }
+
+  // The day's rates, from our own table. Without any rate the site shows the original prices only.
+  async function fetchExchangeRates() {
+    try {
+      const { data, error } = await supabase.from("exchange_rates").select("quote, rate, source_updated_at, updated_at").eq("base", "USD");
+      if (error) throw error;
+      const rates = { USD: 1 };
+      let updatedAt = null;
+      for (const row of data || []) {
+        const rate = Number(row.rate);
+        if (rate > 0) rates[row.quote] = rate;
+        const when = row.source_updated_at || row.updated_at;
+        if (when && (!updatedAt || when > updatedAt)) updatedAt = when;
+      }
+      setFx(Object.keys(rates).length > 1 ? { rates, updatedAt } : null);
+    } catch {
+      setFx(null);
+    }
+  }
+
+  // Instant switch (no reload). The price filters are converted too, so they keep the same meaning.
+  function changeCurrency(next) {
+    setCurrencyOpen(false);
+    if (next === shownCurrency) return;
+    const convertFilter = value => {
+      if (!value) return value;
+      const converted = convertPrice(Number(value), filterCurrency, next, fx?.rates);
+      return converted == null ? value : String(Math.round(converted));
+    };
+    setPriceMin(convertFilter);
+    setPriceMax(convertFilter);
+    setCurrency(next);
+    saveCurrency(next);
   }
 
   function resetPagination() { setVisibleCount(PAGE_SIZE); }
@@ -829,12 +918,23 @@ export default function App() {
     };
   }
 
+  // Currencies we can show: USD plus every currency with a rate. A saved currency without a rate
+  // falls back to USD; with no rate at all, prices stay in their own currency (shownCurrency = null).
+  const availableCurrencies = fx ? Object.keys(CURRENCY_INFO).filter(code => fx.rates[code]) : [];
+  const shownCurrency = fx ? (fx.rates[currency] ? currency : "USD") : null;
+  const filterCurrency = shownCurrency || "USD";
+
   const filtered = listings.filter(l => {
     if (filterVille !== "Toutes" && l.ville !== filterVille) return false;
     if (filterDispo === "Disponible" && !l.disponible) return false;
     if (filterDispo === "Occupée" && l.disponible) return false;
-    if (priceMin && Number(l.prix) < Number(priceMin)) return false;
-    if (priceMax && Number(l.prix) > Number(priceMax)) return false;
+    if (priceMin || priceMax) {
+      // Price filters are in the chosen currency. Without a rate, a listing in another currency
+      // can't be compared: it stays in the list rather than being hidden by mistake.
+      const price = convertPrice(Number(l.prix) || 0, l.devise || "USD", filterCurrency, fx?.rates);
+      if (price != null && priceMin && price < Number(priceMin)) return false;
+      if (price != null && priceMax && price > Number(priceMax)) return false;
+    }
     if (filterChambres && (Number(l.chambres) || 0) < Number(filterChambres)) return false;
     if (search.trim()) {
       const q = search.trim().toLowerCase();
@@ -844,9 +944,11 @@ export default function App() {
     return true;
   });
 
+  // Sorting compares USD values (the original number when there is no rate).
+  const priceInUsd = l => convertPrice(Number(l.prix) || 0, l.devise || "USD", "USD", fx?.rates) ?? (Number(l.prix) || 0);
   const sorted = [...filtered].sort((a, b) => {
-    if (sortBy === "price_asc") return (a.prix || 0) - (b.prix || 0);
-    if (sortBy === "price_desc") return (b.prix || 0) - (a.prix || 0);
+    if (sortBy === "price_asc") return priceInUsd(a) - priceInUsd(b);
+    if (sortBy === "price_desc") return priceInUsd(b) - priceInUsd(a);
     return new Date(b.created_at) - new Date(a.created_at);
   });
   const visible = sorted.slice(0, visibleCount);
@@ -862,8 +964,20 @@ export default function App() {
 
   const filtersActiveCount = [filterVille !== "Toutes", filterDispo !== "Toutes", Boolean(filterChambres), Boolean(priceMin), Boolean(priceMax)].filter(Boolean).length;
   const filtersActive = filtersActiveCount > 0 || Boolean(search.trim());
-  const townCount = new Set(listings.map(l => l.ville).filter(Boolean)).size;
-  const verifiedOwnerCount = new Set(listings.filter(l => verifiedOwners.has(l.owner_id)).map(l => l.owner_id)).size;
+  // Price as the visitor sees it: converted into the chosen currency and rounded, or the listing's
+  // own price when it can't be converted. `owner` is the price the owner set.
+  function priceInfo(l) {
+    const from = l.devise || "USD";
+    const amount = Number(l.prix) || 0;
+    const owner = formatMoney(amount, from);
+    const value = shownCurrency && from !== shownCurrency ? convertPrice(amount, from, shownCurrency, fx.rates) : null;
+    if (value == null) return { text: owner, devise: from, converted: false, owner };
+    return { text: formatMoney(roundPrice(value, shownCurrency), shownCurrency), devise: shownCurrency, converted: true, owner };
+  }
+  const rateIsRecent = fx?.updatedAt && Date.now() - new Date(fx.updatedAt).getTime() < 36 * 3600 * 1000;
+  const rateNote = fx
+    ? `Prix convertis au ${rateIsRecent ? "taux du jour" : "dernier taux connu"} (1 USD = ${fx.rates.CDF ? formatMoney(Math.round(fx.rates.CDF), "CDF") : formatMoney(fx.rates[availableCurrencies.find(c => c !== "USD")], availableCurrencies.find(c => c !== "USD"))}${fx.updatedAt ? `, mis à jour le ${formatDate(fx.updatedAt)}` : ""}).`
+    : "";
   const showMessageBtn = Boolean(detail && currentUser && !canEdit);
   const whatsappHref = detail ? `https://wa.me/${(detail.whatsapp || CONTACT_WHATSAPP).replace(/[^0-9]/g, "")}` : "";
   const showContactBar = page === "detail" && Boolean(detail) && isMobile;
@@ -927,6 +1041,8 @@ export default function App() {
     navBtn: { ...btn, minHeight: 40, padding: "0 12px", borderRadius: 10, background: "transparent", color: C.ink, fontWeight: 600 },
     navBtnActive: { background: C.soft, color: C.navy },
     navCta: { ...btn, minHeight: 40, padding: "0 16px", borderRadius: 999, background: C.green, color: "#fff", marginLeft: 6 },
+    curBtn: { ...btn, minHeight: 44, padding: "0 12px", borderRadius: 12, background: "#fff", color: C.navy, border: `1px solid ${C.line}`, fontSize: 15, flexShrink: 0 },
+    navRight: { display: "flex", alignItems: "center", gap: 8, minWidth: 0 },
     burger: { width: 44, height: 44, borderRadius: 12, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, display: "flex", alignItems: "center", justifyContent: "center", padding: 0 },
     menuBackdrop: { position: "fixed", top: 64, left: 0, right: 0, bottom: 0, background: "rgba(10, 31, 71, 0.35)", zIndex: 105 },
     menuPanel: { position: "fixed", top: 64, left: 0, right: 0, zIndex: 110, background: "#fff", borderBottom: `1px solid ${C.line}`, boxShadow: "0 16px 32px rgba(10, 31, 71, 0.12)", padding: "6px 16px 16px", display: "flex", flexDirection: "column", maxHeight: "calc(100vh - 64px)", overflowY: "auto" },
@@ -938,7 +1054,7 @@ export default function App() {
     toastError: { background: "#b42318" },
 
     // Home
-    hero: { color: "#fff", padding: isMobile ? "36px 16px 76px" : "92px 24px 136px" },
+    hero: { color: "#fff", padding: isMobile ? "36px 16px 48px" : "92px 24px 128px" },
     heroInner: { maxWidth: 920, margin: "0 auto", textAlign: "center" },
     heroEyebrow: { margin: "0 0 12px", fontSize: 13, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "#86efac" },
     heroTitle: { margin: "0 auto 12px", maxWidth: 760, fontSize: isMobile ? 30 : 52, fontWeight: 800, lineHeight: 1.12, letterSpacing: "-0.025em", textWrap: "balance" },
@@ -953,12 +1069,6 @@ export default function App() {
     searchLabel: { display: "block", fontSize: 12, fontWeight: 700, color: C.navy, letterSpacing: "0.02em", cursor: "pointer" },
     searchControl: { width: "100%", border: "none", backgroundColor: "transparent", padding: "2px 0", fontSize: 16, color: C.ink, minHeight: 30, fontFamily: "inherit" },
     searchBtn: { ...btn, background: C.green, color: "#fff", minHeight: isNarrow ? 52 : 56, borderRadius: isNarrow ? 14 : 999, padding: "0 28px", fontSize: 16, flexShrink: 0, gridColumn: isNarrow ? "1 / -1" : "auto" },
-    trust: { position: "relative", marginTop: isMobile ? -40 : -52, display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", background: "#fff", borderRadius: 20, boxShadow: "0 10px 30px rgba(10, 31, 71, 0.12)", border: `1px solid ${C.line}`, padding: isMobile ? "14px 0" : "22px 0" },
-    trustItem: { display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: "center", justifyContent: "center", gap: isMobile ? 6 : 14, textAlign: isMobile ? "center" : "left", padding: "0 8px", minWidth: 0 },
-    trustIcon: { width: isMobile ? 36 : 48, height: isMobile ? 36 : 48, borderRadius: "50%", background: C.greenSoft, color: C.green, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 },
-    trustNum: { fontSize: isMobile ? 20 : 26, fontWeight: 800, color: C.navy, lineHeight: 1.1 },
-    trustLabel: { fontSize: isMobile ? 12 : 14, color: C.muted, lineHeight: 1.3 },
-    trustWrap: { width: "100%", maxWidth: maxW, margin: "0 auto", padding: `0 ${gutter}px` },
     section: { width: "100%", maxWidth: maxW, margin: "0 auto", padding: isMobile ? `40px ${gutter}px` : `64px ${gutter}px` },
     sectionHead: { display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12, marginBottom: isMobile ? 18 : 28 },
     softBand: { background: C.soft },
@@ -994,8 +1104,10 @@ export default function App() {
     cardImg: { width: "100%", height: "100%", objectFit: "cover", display: "block" },
     cardPlaceholder: { width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#9aa6bd", background: "linear-gradient(135deg, #e6ecf7, #f3f6fb)" },
     cardBody: { padding: "12px 2px 0" },
-    cardPrice: { margin: 0, fontSize: 20, fontWeight: 800, color: C.navy, letterSpacing: "-0.01em", lineHeight: 1.25 },
+    cardPrice: { margin: 0, fontSize: 20, fontWeight: 800, color: C.navy, letterSpacing: "-0.01em", lineHeight: 1.25, display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "0 8px" },
     priceUnit: { fontSize: 14, fontWeight: 500, color: C.muted, letterSpacing: 0 },
+    ownerPrice: { margin: "6px 0 0", fontSize: 13, color: C.muted, lineHeight: 1.4 },
+    fieldSymbol: { position: "absolute", right: 14, top: 0, bottom: 0, display: "flex", alignItems: "center", fontSize: 15, fontWeight: 700, color: C.muted, pointerEvents: "none" },
     cardTitle: { margin: "2px 0 0", fontSize: 15, fontWeight: 600, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
     cardMeta: { display: "flex", alignItems: "center", gap: 6, margin: "4px 0 0", fontSize: 14, color: C.muted, minWidth: 0 },
     ellipsis: { minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
@@ -1023,8 +1135,8 @@ export default function App() {
     detailTitle: { margin: 0, fontSize: isMobile ? 25 : 32, fontWeight: 800, color: C.navy, letterSpacing: "-0.02em", lineHeight: 1.2 },
     detailLoc: { display: "flex", alignItems: "flex-start", gap: 6, margin: "8px 0 0", fontSize: 16, color: C.muted },
     detailRating: { display: "flex", alignItems: "center", gap: 6, margin: "6px 0 0", fontSize: 15, color: C.ink },
-    bigPrice: { margin: 0, fontSize: 28, fontWeight: 800, color: C.navy, letterSpacing: "-0.02em", lineHeight: 1.15 },
-    priceRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginTop: 16 },
+    bigPrice: { margin: 0, fontSize: 28, fontWeight: 800, color: C.navy, letterSpacing: "-0.02em", lineHeight: 1.15, display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "2px 10px" },
+    priceRow: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginTop: 16 },
     actionRow: { display: "flex", gap: 8, flexWrap: "wrap", marginTop: 16 },
     divider: { border: "none", borderTop: `1px solid ${C.line}`, margin: isMobile ? "22px 0" : "28px 0" },
     infoGrid: { display: "grid", gridTemplateColumns: isMobile ? "repeat(2, minmax(0, 1fr))" : "repeat(3, minmax(0, 1fr))", gap: 10 },
@@ -1088,6 +1200,7 @@ export default function App() {
     isFav: favorites.has(l.id),
     onToggleFav: () => toggleFavorite(l.id),
     verified: verifiedOwners.has(l.owner_id),
+    price: priceInfo(l),
   });
 
   const loginPrompt = text => (
@@ -1121,11 +1234,24 @@ export default function App() {
     </div>
   );
 
+  // A listing's price, big. When converted, one discreet line gives the price the owner set.
+  function bigPriceBlock(l, style) {
+    const info = priceInfo(l);
+    return (
+      <div style={{ minWidth: 0 }}>
+        <p style={{ ...S.bigPrice, ...style }}>
+          <span data-testid="price" key={info.devise} className="price-fade">{info.text}<span style={S.priceUnit}>/mois</span></span>
+        </p>
+        {info.converted && <p style={S.ownerPrice} data-testid="owner-price">Prix fixé par le propriétaire : {info.owner}</p>}
+      </div>
+    );
+  }
+
   // Price, owner and contact buttons: a column on the right on computers, under the title on tablets.
   const contactCard = detail && (
     <div style={S.asideCard}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-        <p style={S.bigPrice}>{formatPrice(detail.prix)} <span style={S.priceUnit}>{detail.devise}/mois</span></p>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        {bigPriceBlock(detail)}
         {statusBadge(detail.disponible)}
       </div>
       {ownerCard}
@@ -1155,6 +1281,12 @@ export default function App() {
       <nav style={S.nav} aria-label="Menu principal">
         <div style={S.navInner}>
           <a href="#/" onClick={linkTo("home")} style={S.logo} aria-label="ImmoCongo – accueil">Immo<span style={S.logoSpan}>Congo</span></a>
+          <div style={S.navRight}>
+          {shownCurrency && (
+            <button type="button" className="hov-soft" style={S.curBtn} aria-haspopup="dialog" aria-expanded={currencyOpen} onClick={() => setCurrencyOpen(true)} data-testid="currency-button">
+              <span className="sr-only">Devise : </span>{currencySymbol(shownCurrency)} {shownCurrency}
+            </button>
+          )}
           {compactNav ? (
             <button
               aria-label="Ouvrir le menu"
@@ -1183,6 +1315,7 @@ export default function App() {
               )}
             </div>
           )}
+          </div>
         </div>
         {compactNav && menuOpen && (
           <>
@@ -1221,6 +1354,19 @@ export default function App() {
         </div>
       )}
 
+      {currencyOpen && shownCurrency && (
+        <CurrencySheet
+          groups={CURRENCY_GROUPS
+            .map(([title, codes]) => ({ title, options: codes.filter(c => availableCurrencies.includes(c)).map(code => ({ code, ...CURRENCY_INFO[code] })) }))
+            .filter(g => g.options.length > 0)}
+          current={shownCurrency}
+          onPick={changeCurrency}
+          onClose={() => setCurrencyOpen(false)}
+          isMobile={isMobile}
+          note={rateNote}
+        />
+      )}
+
       {confirmState && (
         <ConfirmDialog
           title={confirmState.title}
@@ -1251,8 +1397,11 @@ export default function App() {
                   </div>
                   {!isNarrow && <span style={S.searchDivider} />}
                   <div className="search-cell" style={S.searchCell}>
-                    <label htmlFor="home-prix" style={S.searchLabel}>Prix max par mois</label>
-                    <input id="home-prix" name="prixMax" type="number" inputMode="numeric" min="0" placeholder="Ex : 500" defaultValue={priceMax} className="search-control" style={S.searchControl} />
+                    <label htmlFor="home-prix" style={S.searchLabel}>Prix max par mois<span className="sr-only"> en {filterCurrency}</span></label>
+                    <div style={{ position: "relative" }}>
+                      <input key={filterCurrency} id="home-prix" name="prixMax" type="number" inputMode="numeric" min="0" placeholder={filterCurrency === "CDF" ? "Ex : 1 000 000" : "Ex : 500"} defaultValue={priceMax} className="search-control" style={{ ...S.searchControl, paddingRight: 36 }} />
+                      <span style={{ ...S.fieldSymbol, right: 0, color: C.navy }} data-testid="field-currency" aria-hidden="true">{currencySymbol(filterCurrency)}</span>
+                    </div>
                   </div>
                   {!isNarrow && <span style={S.searchDivider} />}
                   <div className="search-cell" style={S.searchCell}>
@@ -1265,24 +1414,6 @@ export default function App() {
                 </form>
               </div>
             </section>
-
-            <div style={S.trustWrap}>
-              <div style={S.trust} data-testid="trust-strip">
-                {[
-                  ["home", listings.length, plural(listings.length, "Annonce publiée", "Annonces publiées")],
-                  ["city", townCount, plural(townCount, "Ville couverte", "Villes couvertes")],
-                  ["verified", verifiedOwnerCount, plural(verifiedOwnerCount, "Propriétaire vérifié", "Propriétaires vérifiés")],
-                ].map(([icon, n, label], i) => (
-                  <div key={label} style={{ ...S.trustItem, ...(i > 0 ? { borderLeft: `1px solid ${C.line}` } : {}) }}>
-                    <span style={S.trustIcon}><Icon name={icon} size={isMobile ? 18 : 22} /></span>
-                    <span style={{ minWidth: 0 }}>
-                      <span style={{ ...S.trustNum, display: "block" }}>{loading ? "–" : n}</span>
-                      <span style={{ ...S.trustLabel, display: "block" }}>{label}</span>
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
 
             <section style={S.section} aria-labelledby="home-latest">
               <div style={S.sectionHead}>
@@ -1400,12 +1531,18 @@ export default function App() {
                       </select>
                     </div>
                     <div>
-                      <label htmlFor="f-prix-min" style={S.filterLabel}>Prix min</label>
-                      <input id="f-prix-min" className="field" style={S.field} type="number" inputMode="numeric" min="0" placeholder="Prix min" value={priceMin} onChange={e => setPriceMin(e.target.value)} />
+                      <label htmlFor="f-prix-min" style={S.filterLabel}>Prix min<span className="sr-only"> en {filterCurrency}</span></label>
+                      <div style={{ position: "relative" }}>
+                        <input id="f-prix-min" className="field" style={{ ...S.field, paddingRight: 44 }} type="number" inputMode="numeric" min="0" placeholder="Min" value={priceMin} onChange={e => setPriceMin(e.target.value)} />
+                        <span style={S.fieldSymbol} data-testid="field-currency" aria-hidden="true">{currencySymbol(filterCurrency)}</span>
+                      </div>
                     </div>
                     <div>
-                      <label htmlFor="f-prix-max" style={S.filterLabel}>Prix max</label>
-                      <input id="f-prix-max" className="field" style={S.field} type="number" inputMode="numeric" min="0" placeholder="Prix max" value={priceMax} onChange={e => setPriceMax(e.target.value)} />
+                      <label htmlFor="f-prix-max" style={S.filterLabel}>Prix max<span className="sr-only"> en {filterCurrency}</span></label>
+                      <div style={{ position: "relative" }}>
+                        <input id="f-prix-max" className="field" style={{ ...S.field, paddingRight: 44 }} type="number" inputMode="numeric" min="0" placeholder="Max" value={priceMax} onChange={e => setPriceMax(e.target.value)} />
+                        <span style={S.fieldSymbol} data-testid="field-currency" aria-hidden="true">{currencySymbol(filterCurrency)}</span>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -1458,7 +1595,7 @@ export default function App() {
                   )}
                   {isMobile && (
                     <div style={S.priceRow}>
-                      <p style={S.bigPrice}>{formatPrice(detail.prix)} <span style={S.priceUnit}>{detail.devise}/mois</span></p>
+                      {bigPriceBlock(detail)}
                       {statusBadge(detail.disponible)}
                     </div>
                   )}
@@ -1587,7 +1724,7 @@ export default function App() {
               <div style={S.contactBar} data-testid="contact-bar">
                 {!showMessageBtn && (
                   <div style={{ flex: "1 1 0", minWidth: 0 }}>
-                    <p style={{ ...S.bigPrice, fontSize: 20 }}>{formatPrice(detail.prix)} <span style={{ ...S.priceUnit, fontSize: 13 }}>{detail.devise}/mois</span></p>
+                    <p style={{ ...S.bigPrice, fontSize: 20 }} data-testid="bar-price"><span key={priceInfo(detail).devise} className="price-fade">{priceInfo(detail).text}<span style={{ ...S.priceUnit, fontSize: 13 }}>/mois</span></span></p>
                     <p style={{ margin: "2px 0 0", fontSize: 13, fontWeight: 600, color: detail.disponible ? "#166534" : "#991b1b" }}>{detail.disponible ? "Disponible" : "Occupée"}</p>
                   </div>
                 )}
@@ -1995,14 +2132,21 @@ export default function App() {
           </div>
         </div>
         <div style={S.footerBottom}>
-          <p style={{ margin: 0, paddingTop: 16, borderTop: `1px solid ${C.line}` }}>© 2026 ImmoCongo – Fungurume, Katanga, RDC</p>
+          <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "8px 24px", paddingTop: 16, borderTop: `1px solid ${C.line}` }}>
+            <p style={{ margin: 0 }}>© 2026 ImmoCongo – Fungurume, Katanga, RDC</p>
+            {fx && (
+              <p style={{ margin: 0 }} data-testid="footer-rate">
+                {rateNote} Taux : <a href="https://www.exchangerate-api.com" target="_blank" rel="noreferrer" style={{ color: C.muted }}>Rates By Exchange Rate API</a>
+              </p>
+            )}
+          </div>
         </div>
       </footer>
     </div>
   );
 }
 
-function ListingCard({ listing, S, href, onOpen, isFav, onToggleFav, verified, footer }) {
+function ListingCard({ listing, S, href, onOpen, isFav, onToggleFav, verified, price, footer }) {
   const photos = listingPhotos(listing);
   const mainPhoto = photos[0];
   const rooms = Number(listing.chambres) || 0;
@@ -2024,7 +2168,9 @@ function ListingCard({ listing, S, href, onOpen, isFav, onToggleFav, verified, f
           )}
         </div>
         <div style={S.cardBody}>
-          <p style={S.cardPrice}>{formatPrice(listing.prix)} <span style={S.priceUnit}>{listing.devise}/mois</span></p>
+          <p style={S.cardPrice}>
+            <span data-testid="price" key={price.devise} className="price-fade">{price.text}<span style={S.priceUnit}>/mois</span></span>
+          </p>
           <h3 style={S.cardTitle}>{listing.titre}</h3>
           <p style={S.cardMeta}>
             <Icon name="pin" size={16} />

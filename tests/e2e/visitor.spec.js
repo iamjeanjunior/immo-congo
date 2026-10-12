@@ -12,9 +12,6 @@ test("visiteur : accueil, liste des annonces et recherche @desktop", async ({ pa
   await open(page);
   await expect(page.getByRole("heading", { name: /Trouvez votre maison/ })).toBeVisible();
   await expect(page.getByRole("search", { name: "Rechercher une maison" })).toBeVisible(); // the big search
-  await expect(page.getByTestId("trust-strip")).toContainText("Annonces publiées");
-  await expect(page.getByTestId("trust-strip")).toContainText(/Villes? couvertes?/);
-  await expect(page.getByTestId("trust-strip")).toContainText(/Propriétaires? vérifiés?/);
   await expect(page.getByRole("heading", { name: "Comment ça marche ?" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Vous avez une maison à louer ?" })).toBeVisible();
   await expect(page.getByRole("contentinfo").getByRole("link", { name: "+264 816 032 560" })).toHaveAttribute("href", "https://wa.me/264816032560");
@@ -116,7 +113,7 @@ test("accueil : la recherche (ville, prix max, chambres) ouvre les annonces filt
   await open(page);
   const search = page.getByRole("search", { name: "Rechercher une maison" });
   await search.getByLabel("Ville").selectOption("Fungurume");
-  await search.getByLabel("Prix max par mois").fill("900");
+  await search.getByLabel("Prix max par mois en USD").fill("900");
   await search.getByLabel("Chambres").selectOption({ label: "2 ou plus" });
   await search.getByRole("button", { name: "Rechercher" }).click();
 
@@ -125,7 +122,7 @@ test("accueil : la recherche (ville, prix max, chambres) ouvre les annonces filt
   await expect(page.getByRole("heading", { name: "Annonces", exact: true })).toBeVisible();
   await openFilters(page);
   await expect(page.getByLabel("Ville", { exact: true })).toHaveValue("Fungurume");
-  await expect(page.getByLabel("Prix max", { exact: true })).toHaveValue("900");
+  await expect(page.getByLabel("Prix max en USD")).toHaveValue("900");
   await expect(page.getByLabel("Chambres", { exact: true })).toHaveValue("2");
   if (test.info().project.name === "phone") await expect(page.getByRole("button", { name: "Filtres (3)" })).toBeVisible();
 
