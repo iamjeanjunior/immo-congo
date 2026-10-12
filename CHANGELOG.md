@@ -2,6 +2,13 @@
 
 Newest first. Written for Junior: what changed for visitors and owners.
 
+## 2026-10-12 — Fix: publishing without a profile, and admin edits (preview, waiting for Junior's OK)
+- To publish, every account needs a "profile" (name and WhatsApp number). Some accounts had none, and they only saw "Erreur lors de la publication". Now, if the profile is missing when someone publishes, the site creates it by itself and publishes the listing. If that still fails, the person sees a clear French message that explains what to do, and the form keeps everything they typed.
+- New accounts: the name and WhatsApp number are now also saved with the account itself. When this goes live, the database will use them to create the profile on its own, as soon as the account is made.
+- Fixed: when an admin edited someone else's listing, the listing became the admin's (it showed the admin's name, and an empty WhatsApp field took the admin's number). Now the real owner stays, and an empty WhatsApp field keeps the listing's own number.
+- The new error message stays on screen for 10 seconds, so there is time to read it.
+- Tested on a test copy of the site (no real accounts were created): signing up, publishing with and without a profile, and an admin editing someone else's listing. Also checked at phone size.
+
 ## 2026-10-12 — Fast photos (live)
 - New photos are now made smaller on the phone before they are sent: a 2 MB phone photo becomes about 70–200 KB, with no visible loss on a phone screen. Pages with photos will load many times faster, even on a slow connection.
 - Photos are now kept in Supabase Storage (a photo store) instead of inside the listing itself. The listing only keeps a link to each photo.
