@@ -36,10 +36,10 @@ The best real-estate website, starting in Fungurume and Katanga, then all of DR 
 - [ ] Owner dashboard: views and favourites for each of my listings.
 
 ## Phase 2 — Getting known
-- [~] **Real page addresses** instead of `#/` links (for example `/annonce/12-maison-2-chambres-fungurume`). Needed for Google and for link previews. Old `#/` links still work.
-- [~] **Link previews on WhatsApp and Facebook:** a shared listing shows its photo, price and town.
+- [x] **Real page addresses** instead of `#/` links (for example `/annonce/12-maison-2-chambres-fungurume`). Needed for Google and for link previews. Old `#/` links still work.
+- [x] **Link previews on WhatsApp and Facebook:** a shared listing shows its photo, price and town.
 - [ ] "Partager sur WhatsApp" button on every listing.
-- [~] Google basics: page titles and descriptions, sitemap, robots.txt. 🧑 After it is live: submit the sitemap in Google Search Console.
+- [x] Google basics: page titles and descriptions, sitemap, robots.txt. 🧑 After it is live: submit the sitemap in Google Search Console.
 - [ ] Installable on the phone home screen like an app (PWA), works on slow connections.
 - [ ] 🧑 Buy our own domain (for example `immocongo.com` or `.cd`); Claude connects it to Netlify.
 - [ ] 🧑 Bring landlords on board: free listings, help them post (or post for them) in Fungurume first.

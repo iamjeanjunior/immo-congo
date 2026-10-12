@@ -2,7 +2,7 @@
 
 Newest first. Written for Junior: what changed for visitors and owners.
 
-## 2026-10-12 — Found on Google, nice previews on WhatsApp (preview)
+## 2026-10-12 — Found on Google, nice previews on WhatsApp (live)
 - **Real page addresses.** Pages now have short, readable French addresses instead of "#/": for example `/annonces`, `/annonce/12-maison-2-chambres-fungurume`, `/connexion`, `/publier`, `/favoris`, `/messages`, `/mes-annonces`. Google can only list pages that have their own address, so this was needed first.
 - **Old links still work.** Links people already shared (with "#/") open the right page and the address changes to the new one by itself. Reloading a page, and the phone's back and forward buttons, work as before.
 - **Link previews on WhatsApp and Facebook.** When someone shares a listing, the message now shows the first photo, the title, the price per month, the town and the number of rooms. The home page and the listings page show a picture with the ImmoCongo logo and "Maisons à louer au Katanga".
