@@ -19,6 +19,13 @@ export default defineConfig([
     },
   },
   {
+    // Netlify Edge Functions (Deno runtime, `Netlify` global).
+    files: ['netlify/**/*.js'],
+    languageOptions: {
+      globals: { ...globals.browser, Netlify: 'readonly' },
+    },
+  },
+  {
     // Node.js code: automatic tests and helper scripts.
     files: ['tests/**/*.{js,mjs}', 'scripts/**/*.{js,mjs}', 'playwright.config.js'],
     languageOptions: {

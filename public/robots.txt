@@ -1,0 +1,11 @@
+# ImmoCongo: public pages are open to search engines; members-only pages are not.
+User-agent: *
+Allow: /
+Disallow: /connexion
+Disallow: /publier
+Disallow: /favoris
+Disallow: /messages
+Disallow: /mes-annonces
+Disallow: /admin
+
+Sitemap: https://immocongo-jandj.netlify.app/sitemap.xml

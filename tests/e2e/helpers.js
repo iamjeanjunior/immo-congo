@@ -136,10 +136,23 @@ export function storagePath(url) {
   return decodeURIComponent(url.slice(url.indexOf(`/${BUCKET}/`) + BUCKET.length + 2).split("?")[0]);
 }
 
+// Real page addresses (2026-10) for the app's page names used in the tests: "", "listings", "listing/12",
+// "chat/5", "auth", "post", "favorites", "messages", "my-listings", "admin". A path starting with "/" is kept.
+const PATHS = { "": "/", listings: "/annonces", auth: "/connexion", post: "/publier", favorites: "/favoris", messages: "/messages", "my-listings": "/mes-annonces", admin: "/admin" };
+export function pathOf(route = "") {
+  if (route.startsWith("/")) return route;
+  const listing = route.match(/^listing\/(\d+)$/);
+  if (listing) return `/annonce/${listing[1]}`;
+  const chat = route.match(/^chat\/(.+)$/);
+  if (chat) return `/messages/${chat[1]}`;
+  if (route in PATHS) return PATHS[route];
+  throw new Error(`open(): unknown page "${route}"`);
+}
+
 // Opens a page of the site with a fresh load (so it reads the latest data from the database).
 export async function open(page, route = "") {
   await page.goto("about:blank");
-  await page.goto(`/#/${route}`);
+  await page.goto(pathOf(route));
 }
 
 // The ☰ menu: on phones the links are hidden until it is opened.
