@@ -2,7 +2,7 @@
 
 Newest first. Written for Junior: what changed for visitors and owners.
 
-## 2026-10-12 — Trust fixes (preview, waiting for Junior's yes)
+## 2026-10-12 — Trust fixes (live)
 - **Real names only.** The owner's name on a listing and the name on a review now always come from the person's own account. Before, someone with technical knowledge could publish a listing or a review under another name (for example "Admin"). Now the database writes the real name itself, whatever the phone sends. When an admin edits someone's listing, the owner's name stays.
 - **Name changes follow everywhere.** If a person changes their name, their listings, reviews and conversations show the new name too.
 - **Honest view counts.** Only real visits of a listing page count. Before, an owner could set any number of "Vues" on their own listing.

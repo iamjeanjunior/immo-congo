@@ -26,16 +26,10 @@ The best real-estate website, starting in Fungurume and Katanga, then all of DR 
 - [x] **Fix: an admin editing someone else's listing becomes its owner.** Editing no longer sends `owner_id` / `owner_name`. (2026-10-12)
 - [x] **Security: only admins can change a profile's role or verified badge** (trigger `protect_profile_privileges`). (2026-10-12)
 - [x] **Automatic testing, so Junior rarely has to test by hand.** Local copy of Supabase (Supabase CLI + Docker Desktop) with test accounts, and 39 automatic browser and database tests; run with `npm run test:e2e` before every preview. (2026-10-12)
-- [~] **Trust fixes** (found by the automatic tests; do before promoting the site). Database part live since 2026-10-12 (migration `trust_fixes`); "Mes annonces" message on the preview `trust-fixes`:
-  - Names shown on listings and reviews come from the author's profile in the database, not from what the browser sends.
-  - Only the view counter (`increment_views`) can change a listing's view count, not its owner.
-  - Conversations can only be started with the real owner of an existing listing.
-  - Messages and reviews sent right after the page opens are signed with the real name (wait for the profile), not "Utilisateur".
-  - Admin can delete other users' photo files when deleting or editing their listing (today they stay in Storage; the test is marked as a known bug).
-  - Visitor on "Mes annonces" (`#/my-listings`) is asked to log in instead of seeing "Vous n'avez pas encore d'annonces".
+- [x] **Trust fixes:** names on listings, reviews and conversations come from the author's profile; only `increment_views` changes view counts; conversations only with a listing's real owner; admin can delete other users' photo files; "Mes annonces" asks visitors to log in. (2026-10-12)
+- [ ] **Design refresh** (Junior's choices, 2026-10-12): **clean & airy** style like Airbnb (white background, big photos, rounded cards, lots of space); **keep the navy + green** colours and logo; home page opens with a **big search bar** (town, price, rooms) over a nice photo. Covers the whole site: home, listing cards, listing page, forms, menus, messages, admin. Replace the browser's own pop-ups (`confirm()` / `alert()`, e.g. "Supprimer cette annonce ?" with English OK/Cancel) with a clean French dialog that matches the site.
 - [ ] Update outdated developer packages (`npm audit` reports 6 issues in vite / eslint dependencies; not visible to visitors).
 - [ ] **Browse without an account:** check that a visitor can see every listing and listing page without logging in; ask for login only to favourite, review, message or publish, with a clear French message explaining why.
-- [ ] **Design refresh:** home page, listing cards and listing page look modern and trustworthy (good photos first, clear price, town and neighbourhood, verified owner badge).
 - [ ] **Split `src/App.jsx`** (~1,260 lines) into smaller files (pages and components). Needed before several agents can work on the code at the same time.
 - [ ] **Listing type fields (cheap now, painful later):** add "for rent / for sale" and a category (house, apartment, room, business premises, land) to listings, with filters.
 - [ ] Unread-message badge on the Messages link.
