@@ -144,6 +144,22 @@ test.describe("visiteur sans compte (clé publique)", () => {
     expect(rev.error).not.toBeNull();
     expect((await anon.from("listing_photos_backup").select("*")).error, "the photo backup is private").not.toBeNull();
   });
+
+  test("le taux de change : tout le monde le lit, personne ne peut le changer", async () => {
+    const before = await db.from("exchange_rates").select("quote, rate").order("quote");
+    expect(before.data.length).toBeGreaterThanOrEqual(1);
+    const anon = anonClient();
+    expect((await anon.from("exchange_rates").select("quote, rate")).data).toEqual(expect.arrayContaining(before.data));
+    const user = await createUser();
+    const admin = await clientAs(SEED.admin);
+    for (const client of [anon, await clientAs(user), admin]) {
+      await client.from("exchange_rates").update({ rate: 1 }).eq("quote", "CDF");
+      expect((await client.from("exchange_rates").insert({ base: "USD", quote: "GBP", rate: 1 })).error).not.toBeNull();
+      await client.from("exchange_rates").delete().eq("quote", "CDF");
+    }
+    const after = await db.from("exchange_rates").select("quote, rate").order("quote");
+    expect(after.data, "only the server (Edge Function) writes the rate").toEqual(before.data);
+  });
 });
 
 // Trust fixes: what other people see (names, view counts, who a conversation is with) is set by

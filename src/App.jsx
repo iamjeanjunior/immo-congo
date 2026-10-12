@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef, useCallback, useSyncExternalStore } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { PHOTO_BUCKET, MAX_PHOTOS, listingPhotos, storagePathFromUrl, checkPhotoFile, compressPhoto } from "./photos.js";
+import Icon from "./Icon.jsx";
+import ConfirmDialog from "./ConfirmDialog.jsx";
+import CurrencySheet from "./CurrencySheet.jsx";
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
@@ -40,7 +43,100 @@ function isMissingProfileError(err) {
 }
 
 const VILLES = ["Fungurume", "Kolwezi", "Lubumbashi", "Likasi", "Kipushi", "Autre"];
+// Rooms filter (home search and listings page): "at least N rooms".
+const CHAMBRES_OPTIONS = [["", "Peu importe"], ["1", "1 ou plus"], ["2", "2 ou plus"], ["3", "3 ou plus"], ["4", "4 ou plus"]];
+const CONTACT_WHATSAPP = "264816032560";
 const PAGE_SIZE = 9;
+const HOME_LATEST = 6;
+
+// Colours: navy for text and headers, green for the main actions, lots of white and light grey.
+const C = {
+  navy: "#0d2f6e", navyDark: "#0a1f47", ink: "#14213d", muted: "#5b6478", line: "#e4e7ee", field: "#cfd5e1",
+  soft: "#f5f7fa", green: "#15803d", greenBright: "#16a34a", greenSoft: "#ecfdf3", red: "#dc2626", amber: "#f59e0b",
+};
+
+// ---------- Currencies ----------
+// Visitors choose the currency prices are shown in (remembered on the device, USD by default).
+// Listings keep the currency their owner chose; prices are converted with the day's rate from our own
+// table `exchange_rates` (filled once a day by the Edge Function update-exchange-rate).
+const CURRENCY_INFO = {
+  USD: { symbol: "$", name: "Dollar américain" },
+  CDF: { symbol: "FC", name: "Franc congolais" },
+  EUR: { symbol: "€", name: "Euro" },
+  ZAR: { symbol: "R", name: "Rand sud-africain" },
+  ZMW: { symbol: "K", name: "Kwacha zambien" },
+};
+const CURRENCY_GROUPS = [["Les plus utilisées", ["USD", "CDF"]], ["Autres devises", ["EUR", "ZAR", "ZMW"]]];
+const CURRENCY_KEY = "immocongo.devise";
+const MONEY = new Intl.NumberFormat("fr", { maximumFractionDigits: 2 });
+
+function readSavedCurrency() {
+  try {
+    const saved = localStorage.getItem(CURRENCY_KEY);
+    return CURRENCY_INFO[saved] ? saved : "USD";
+  } catch {
+    return "USD"; // storage blocked (private browsing...): default currency
+  }
+}
+
+function currencySymbol(code) {
+  return CURRENCY_INFO[code]?.symbol || code;
+}
+
+// "200 000 FC", "70 $", "64 €" (French spacing; the symbol never goes to the next line).
+function formatMoney(amount, code) {
+  return `${MONEY.format(Number(amount) || 0)}\u00a0${currencySymbol(code)}`;
+}
+
+function saveCurrency(currency) {
+  try {
+    localStorage.setItem(CURRENCY_KEY, currency);
+  } catch {
+    // storage blocked: the choice just isn't remembered
+  }
+}
+
+// amount in `from` → amount in `to`, or null if a rate is missing. rates = { USD: 1, CDF: 2300, ZAR: 16.5 }.
+function convertPrice(amount, from, to, rates) {
+  if (from === to) return amount;
+  if (!rates || !rates[from] || !rates[to]) return null;
+  return (amount / rates[from]) * rates[to];
+}
+
+// Converted prices are rounded so they read well: whole dollars / euros..., and francs to the
+// nearest 500 FC (or 1 000 FC from 100 000 FC).
+function roundPrice(value, currency) {
+  if (currency !== "CDF") return Math.round(value);
+  const rounded = Math.round(value / (value >= 100000 ? 1000 : 500)) * (value >= 100000 ? 1000 : 500);
+  return rounded > 0 ? rounded : Math.round(value);
+}
+
+function formatDate(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" });
+}
+
+function formatTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+}
+
+function initial(name) {
+  return (String(name || "").trim().charAt(0) || "?").toUpperCase();
+}
+
+// Supabase answers in English: show the common signup problems in French.
+function signupErrorMessage(error) {
+  const msg = String(error?.message || "");
+  if (/already (registered|exists)/i.test(msg)) return "Un compte existe déjà avec cet email. Connectez-vous.";
+  if (/password/i.test(msg) && /(at least|characters|weak)/i.test(msg)) return "Le mot de passe doit contenir au moins 6 caractères.";
+  if (/email/i.test(msg) && /invalid/i.test(msg)) return "Adresse email invalide.";
+  if (/rate limit|too many/i.test(msg)) return "Trop de tentatives. Réessayez dans quelques minutes.";
+  if (/fetch|network/i.test(msg)) return "Problème de connexion internet. Vérifiez votre connexion puis réessayez.";
+  return msg || "Impossible de créer le compte. Réessayez.";
+}
 const DEFAULT_POST_FORM = {
   titre: "", prix: "", devise: "USD", localisation: "", ville: "Fungurume",
   chambres: "", description: "", whatsapp: "", disponible: "true",
@@ -91,6 +187,8 @@ export default function App() {
   const [sortBy, setSortBy] = useState("recent");
   const [priceMin, setPriceMin] = useState("");
   const [priceMax, setPriceMax] = useState("");
+  const [filterChambres, setFilterChambres] = useState("");
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [menuOpen, setMenuOpen] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -113,13 +211,26 @@ export default function App() {
   const [adminUsers, setAdminUsers] = useState([]);
   const [adminReviews, setAdminReviews] = useState([]);
   const [adminTab, setAdminTab] = useState("listings");
+  // Owners with the verified badge (ids), for the badge on listing cards and the home page.
+  const [verifiedOwners, setVerifiedOwners] = useState(new Set());
+  // The site's confirmation window: { title, message, confirmLabel, danger, resolve } or null.
+  const [confirmState, setConfirmState] = useState(null);
+  const [authError, setAuthError] = useState("");
+  // Display currency and the day's exchange rates: { rates: { USD: 1, CDF, EUR, ZAR, ZMW }, updatedAt } or null.
+  const [currency, setCurrency] = useState(readSavedCurrency);
+  const [fx, setFx] = useState(null);
+  const [currencyOpen, setCurrencyOpen] = useState(false);
   const viewedRef = useRef(new Set());
   const toastTimerRef = useRef(null);
+  const chatScrollRef = useRef(null);
 
   const isAdmin = profile?.role === "admin";
   const isMobile = useMediaQuery("(max-width: 640px)");
-  // Logged-in users have up to 7 menu links (~860px), so they get the ☰ menu on tablets too.
-  const compactNav = useMediaQuery(currentUser ? "(max-width: 960px)" : "(max-width: 640px)");
+  // Tablets: one column on the listing page, search and filters on several rows.
+  const isNarrow = useMediaQuery("(max-width: 900px)");
+  // Logged-in users have up to 7 menu links (~860px) plus the USD / CDF switch, so they get the ☰ menu
+  // on tablets and small laptops too.
+  const compactNav = useMediaQuery(currentUser ? "(max-width: 1100px)" : "(max-width: 760px)");
 
   // ---------- auth + listings bootstrap ----------
   useEffect(() => {
@@ -133,6 +244,8 @@ export default function App() {
       else setProfile(null);
     });
     fetchListings();
+    fetchVerifiedOwners();
+    fetchExchangeRates();
     return () => subscription.unsubscribe();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -158,7 +271,15 @@ export default function App() {
   // ---------- reset pagination when filters change ----------
   useEffect(() => {
     resetPagination();
-  }, [filterVille, filterDispo, search, priceMin, priceMax, sortBy]);
+  }, [filterVille, filterDispo, search, priceMin, priceMax, filterChambres, sortBy]);
+
+  // ---------- ☰ menu: Esc closes it ----------
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onKey(e) { if (e.key === "Escape") setMenuOpen(false); }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [menuOpen]);
 
   // ---------- detail page: reviews + view counter ----------
   useEffect(() => {
@@ -191,11 +312,17 @@ export default function App() {
     return () => { active = false; };
   }, [page, selectedId, listings]);
 
-  // ---------- messages page ----------
+  // ---------- messages page (and the chat page header: who the conversation is with) ----------
   useEffect(() => {
-    if (page === "messages" && currentUser) fetchConversations();
+    if ((page === "messages" || page === "chat") && currentUser) fetchConversations();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, currentUser]);
+
+  // ---------- chat page: show the newest message ----------
+  useEffect(() => {
+    const box = chatScrollRef.current;
+    if (box) box.scrollTop = box.scrollHeight;
+  }, [messages, page]);
 
   // ---------- chat page: live messages ----------
   useEffect(() => {
@@ -273,6 +400,51 @@ export default function App() {
     } catch {
       setFavorites(new Set());
     }
+  }
+
+  // Public data (profiles are readable by everyone): only the ids of verified owners.
+  async function fetchVerifiedOwners() {
+    try {
+      const { data, error } = await supabase.from("profiles").select("id").eq("verified", true);
+      if (error) throw error;
+      setVerifiedOwners(new Set((data || []).map(p => p.id)));
+    } catch {
+      setVerifiedOwners(new Set());
+    }
+  }
+
+  // The day's rates, from our own table. Without any rate the site shows the original prices only.
+  async function fetchExchangeRates() {
+    try {
+      const { data, error } = await supabase.from("exchange_rates").select("quote, rate, source_updated_at, updated_at").eq("base", "USD");
+      if (error) throw error;
+      const rates = { USD: 1 };
+      let updatedAt = null;
+      for (const row of data || []) {
+        const rate = Number(row.rate);
+        if (rate > 0) rates[row.quote] = rate;
+        const when = row.source_updated_at || row.updated_at;
+        if (when && (!updatedAt || when > updatedAt)) updatedAt = when;
+      }
+      setFx(Object.keys(rates).length > 1 ? { rates, updatedAt } : null);
+    } catch {
+      setFx(null);
+    }
+  }
+
+  // Instant switch (no reload). The price filters are converted too, so they keep the same meaning.
+  function changeCurrency(next) {
+    setCurrencyOpen(false);
+    if (next === shownCurrency) return;
+    const convertFilter = value => {
+      if (!value) return value;
+      const converted = convertPrice(Number(value), filterCurrency, next, fx?.rates);
+      return converted == null ? value : String(Math.round(converted));
+    };
+    setPriceMin(convertFilter);
+    setPriceMax(convertFilter);
+    setCurrency(next);
+    saveCurrency(next);
   }
 
   function resetPagination() { setVisibleCount(PAGE_SIZE); }
@@ -423,14 +595,36 @@ export default function App() {
       const { error } = await supabase.from("profiles").update({ verified: !current }).eq("id", userId);
       if (error) throw error;
       setAdminUsers(prev => prev.map(u => u.id === userId ? { ...u, verified: !current } : u));
+      setVerifiedOwners(prev => {
+        const next = new Set(prev);
+        if (current) next.delete(userId); else next.add(userId);
+        return next;
+      });
       showToast("Statut mis à jour.");
     } catch {
       showToast("Action refusée (migration SQL / droits admin ?).", "error");
     }
   }
 
+  // Opens the site's confirmation window. Resolves to true ("Supprimer"...) or false ("Annuler", Esc, tap outside).
+  function askConfirm({ title, message, confirmLabel, danger = false }) {
+    return new Promise(resolve => setConfirmState({ title, message, confirmLabel, danger, resolve }));
+  }
+
+  function closeConfirm(answer) {
+    if (confirmState) confirmState.resolve(answer);
+    setConfirmState(null);
+  }
+
   async function adminDeleteReview(id) {
-    if (!confirm("Supprimer cet avis ?")) return;
+    const review = adminReviews.find(r => r.id === id);
+    const ok = await askConfirm({
+      title: "Supprimer cet avis ?",
+      message: `L'avis de ${review?.reviewer_name || "cet utilisateur"} sera supprimé définitivement.`,
+      confirmLabel: "Supprimer",
+      danger: true,
+    });
+    if (!ok) return;
     try {
       const { error } = await supabase.from("reviews").delete().eq("id", id);
       if (error) throw error;
@@ -463,6 +657,7 @@ export default function App() {
     setSelectedId(id);
     setActivePhoto(0);
     setMenuOpen(false);
+    setAuthError("");
     window.history.pushState({ page: p, id }, "", routeHash(p, id));
     window.scrollTo(0, 0);
   }
@@ -470,6 +665,7 @@ export default function App() {
   async function handleAuth(e) {
     e.preventDefault();
     setSubmitting(true);
+    setAuthError("");
     if (authMode === "register") {
       // nom + whatsapp also travel with the signup: the database uses them to create the profile by itself.
       const { data, error } = await supabase.auth.signUp({
@@ -477,7 +673,7 @@ export default function App() {
         password: form.password,
         options: { emailRedirectTo: window.location.origin, data: { nom: form.nom, whatsapp: form.whatsapp } }
       });
-      if (error) { showToast(error.message, "error"); setSubmitting(false); return; }
+      if (error) { setAuthError(signupErrorMessage(error)); setSubmitting(false); return; }
       if (data.user) {
         // Upsert, not insert: the database may already have created the profile (signup trigger),
         // and a plain insert would then fail. No "role" here: new accounts are always "user".
@@ -493,7 +689,7 @@ export default function App() {
       }
     } else {
       const { error } = await supabase.auth.signInWithPassword({ email: form.email, password: form.password });
-      if (error) { showToast("Email ou mot de passe incorrect.", "error"); setSubmitting(false); return; }
+      if (error) { setAuthError("Email ou mot de passe incorrect."); setSubmitting(false); return; }
       showToast("Connexion réussie !");
       nav("home");
     }
@@ -650,8 +846,15 @@ export default function App() {
   }
 
   async function deleteListing(id) {
-    if (!confirm("Supprimer cette annonce ?")) return;
-    const photos = listingPhotos(listings.find(l => l.id === id));
+    const target = listings.find(l => l.id === id);
+    const ok = await askConfirm({
+      title: "Supprimer cette annonce ?",
+      message: `L'annonce « ${target?.titre || ""} » et ses photos seront supprimées définitivement.`,
+      confirmLabel: "Supprimer",
+      danger: true,
+    });
+    if (!ok) return;
+    const photos = listingPhotos(target);
     try {
       const { error } = await supabase.from("listings").delete().eq("id", id);
       if (error) throw error;
@@ -677,12 +880,62 @@ export default function App() {
     nav("post");
   }
 
+  function startNewListing() {
+    setEditId(null);
+    setPostForm(DEFAULT_POST_FORM);
+    clearFormPhotos();
+    nav("post");
+  }
+
+  // Home page search: town, max price and rooms, then straight to the filtered listings.
+  function searchFromHome(e) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    setFilterVille(String(f.get("ville") || "Toutes"));
+    setPriceMax(String(f.get("prixMax") || "").trim());
+    setFilterChambres(String(f.get("chambres") || ""));
+    setSearch("");
+    setPriceMin("");
+    setFilterDispo("Toutes");
+    nav("listings");
+  }
+
+  function clearFilters() {
+    setFilterVille("Toutes");
+    setFilterDispo("Toutes");
+    setFilterChambres("");
+    setSearch("");
+    setPriceMin("");
+    setPriceMax("");
+  }
+
+  // Click on a link to a page of the site: open it in the app (a new tab still works with Ctrl/⌘).
+  function linkTo(p, id) {
+    return e => {
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      e.preventDefault();
+      nav(p, id);
+    };
+  }
+
+  // Currencies we can show: USD plus every currency with a rate. A saved currency without a rate
+  // falls back to USD; with no rate at all, prices stay in their own currency (shownCurrency = null).
+  const availableCurrencies = fx ? Object.keys(CURRENCY_INFO).filter(code => fx.rates[code]) : [];
+  const shownCurrency = fx ? (fx.rates[currency] ? currency : "USD") : null;
+  const filterCurrency = shownCurrency || "USD";
+
   const filtered = listings.filter(l => {
     if (filterVille !== "Toutes" && l.ville !== filterVille) return false;
     if (filterDispo === "Disponible" && !l.disponible) return false;
     if (filterDispo === "Occupée" && l.disponible) return false;
-    if (priceMin && Number(l.prix) < Number(priceMin)) return false;
-    if (priceMax && Number(l.prix) > Number(priceMax)) return false;
+    if (priceMin || priceMax) {
+      // Price filters are in the chosen currency. Without a rate, a listing in another currency
+      // can't be compared: it stays in the list rather than being hidden by mistake.
+      const price = convertPrice(Number(l.prix) || 0, l.devise || "USD", filterCurrency, fx?.rates);
+      if (price != null && priceMin && price < Number(priceMin)) return false;
+      if (price != null && priceMax && price > Number(priceMax)) return false;
+    }
+    if (filterChambres && (Number(l.chambres) || 0) < Number(filterChambres)) return false;
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       const haystack = `${l.titre} ${l.localisation} ${l.description}`.toLowerCase();
@@ -691,9 +944,11 @@ export default function App() {
     return true;
   });
 
+  // Sorting compares USD values (the original number when there is no rate).
+  const priceInUsd = l => convertPrice(Number(l.prix) || 0, l.devise || "USD", "USD", fx?.rates) ?? (Number(l.prix) || 0);
   const sorted = [...filtered].sort((a, b) => {
-    if (sortBy === "price_asc") return (a.prix || 0) - (b.prix || 0);
-    if (sortBy === "price_desc") return (b.prix || 0) - (a.prix || 0);
+    if (sortBy === "price_asc") return priceInUsd(a) - priceInUsd(b);
+    if (sortBy === "price_desc") return priceInUsd(b) - priceInUsd(a);
     return new Date(b.created_at) - new Date(a.created_at);
   });
   const visible = sorted.slice(0, visibleCount);
@@ -707,702 +962,1380 @@ export default function App() {
   const avgRating = reviews.length ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length : 0;
   const relatedListings = detail ? listings.filter(l => l.id !== detail.id && l.ville === detail.ville).slice(0, 3) : [];
 
-  const S = {
-    root: { fontFamily: "'Inter', 'Segoe UI', system-ui, sans-serif", minHeight: "100vh", background: "#f7f6f2", color: "#1a1a1a", overflowWrap: "break-word" },
-    nav: { background: "#0d2f6e", padding: isMobile ? "0 16px" : "0 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, height: 60, position: "sticky", top: 0, zIndex: 100 },
-    logo: { color: "#fff", fontWeight: 700, fontSize: 18, cursor: "pointer", flexShrink: 0, whiteSpace: "nowrap" },
-    logoSpan: { color: "#4ade80" },
-    navLinks: { display: "flex", gap: 8, alignItems: "center" },
-    navLinksMobile: { position: "fixed", top: 60, left: 0, right: 0, background: "#0d2f6e", display: "flex", flexDirection: "column", alignItems: "stretch", gap: 6, padding: "12px 20px 20px", boxShadow: "0 4px 10px rgba(0,0,0,0.2)", maxHeight: "calc(100vh - 60px)", overflowY: "auto", boxSizing: "border-box" },
-    burger: { background: "none", border: "none", color: "#fff", fontSize: 26, cursor: "pointer", lineHeight: 1, padding: "4px 6px" },
-    navBtn: { background: "none", border: "none", color: "#c7d9f7", fontSize: 14, cursor: "pointer", padding: "6px 10px", borderRadius: 6, whiteSpace: "nowrap" },
-    navBtnPrimary: { background: "#22c55e", border: "none", color: "#fff", fontSize: 14, cursor: "pointer", padding: "6px 14px", borderRadius: 6, fontWeight: 600, whiteSpace: "nowrap" },
-    hero: { background: "linear-gradient(135deg, #0d2f6e 0%, #1e4db7 60%, #0ea5e9 100%)", color: "#fff", padding: "clamp(48px, 10vw, 80px) 20px clamp(36px, 8vw, 60px)", textAlign: "center" },
-    heroTitle: { fontSize: "clamp(26px, 6vw, 36px)", fontWeight: 800, margin: "0 0 12px", lineHeight: 1.15 },
-    heroSub: { fontSize: "clamp(14px, 3vw, 17px)", opacity: 0.85, margin: "0 0 32px" },
-    btnGreen: { background: "#22c55e", color: "#fff", border: "none", borderRadius: 8, padding: "13px 28px", fontSize: 15, fontWeight: 700, cursor: "pointer" },
-    btnOutline: { background: "transparent", color: "#fff", border: "2px solid rgba(255,255,255,0.6)", borderRadius: 8, padding: "13px 28px", fontSize: 15, fontWeight: 600, cursor: "pointer" },
-    btnOutlineDark: { background: "#fff", color: "#0d2f6e", border: "2px solid #0d2f6e", borderRadius: 8, padding: "12px 26px", fontSize: 14, fontWeight: 700, cursor: "pointer" },
-    section: { maxWidth: 1100, margin: "0 auto", padding: isMobile ? "24px 16px" : "40px 20px" },
-    panel: { background: "#fff", borderRadius: 12, padding: isMobile ? 18 : 28, boxShadow: "0 1px 4px rgba(0,0,0,0.08)" },
-    sectionTitle: { fontSize: 22, fontWeight: 700, margin: "0 0 24px", color: "#0d2f6e" },
-    grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 20 },
-    card: { background: "#fff", borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,0.08)", cursor: "pointer" },
-    cardImg: { width: "100%", height: 190, objectFit: "cover", background: "#e2eaf7", display: "block" },
-    cardImgPlaceholder: { width: "100%", height: 190, background: "linear-gradient(135deg, #c7d9f7, #e2eaf7)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 48 },
-    cardBody: { padding: 16 },
-    cardTitle: { fontSize: 15, fontWeight: 700, margin: "0 0 6px", color: "#0d2f6e" },
-    cardMeta: { fontSize: 13, color: "#555", margin: "3px 0" },
-    badge: { display: "inline-block", padding: "2px 8px", borderRadius: 12, fontSize: 12, fontWeight: 600 },
-    badgeGreen: { background: "#dcfce7", color: "#166534" },
-    badgeRed: { background: "#fee2e2", color: "#991b1b" },
-    price: { fontSize: 19, fontWeight: 800, color: "#0d2f6e", margin: "8px 0 0" },
-    // On phones the filters become a neat 2-column grid (see filterFull / filterHalf).
-    filterBar: isMobile
-      ? { background: "#fff", padding: "14px 16px", borderBottom: "1px solid #e5e7eb", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, alignItems: "center" }
-      : { background: "#fff", padding: "16px 20px", borderBottom: "1px solid #e5e7eb", display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" },
-    filterFull: isMobile ? { gridColumn: "1 / -1", width: "100%", minWidth: 0, boxSizing: "border-box" } : {},
-    filterHalf: isMobile ? { width: "100%", minWidth: 0, boxSizing: "border-box" } : {},
-    // 16px on phones stops iPhones from zooming the page when a field is tapped.
-    select: { padding: "8px 12px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: isMobile ? 16 : 14, background: "#fff", cursor: "pointer" },
-    input: { padding: "10px 14px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: isMobile ? 16 : 15, width: "100%", boxSizing: "border-box", fontFamily: "inherit" },
-    textarea: { padding: "10px 14px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: isMobile ? 16 : 15, width: "100%", boxSizing: "border-box", minHeight: 100, fontFamily: "inherit", resize: "vertical" },
-    formGroup: { marginBottom: 16 },
-    label: { display: "block", fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 6 },
-    formCard: { background: "#fff", borderRadius: 12, padding: isMobile ? 20 : 32, maxWidth: 520, margin: "0 auto", boxShadow: "0 2px 8px rgba(0,0,0,0.08)" },
-    submitBtn: { background: "#0d2f6e", color: "#fff", border: "none", borderRadius: 8, padding: "13px 28px", fontSize: 15, fontWeight: 700, cursor: "pointer", width: "100%" },
-    whatsappBtn: { display: "flex", alignItems: "center", justifyContent: "center", gap: 10, background: "#25D366", color: "#fff", border: "none", borderRadius: 10, padding: "14px 24px", fontSize: 16, fontWeight: 700, cursor: "pointer", width: "100%", boxSizing: "border-box", marginTop: 20, textDecoration: "none" },
-    toast: { position: "fixed", bottom: 24, left: 16, right: 16, margin: "0 auto", width: "fit-content", maxWidth: 560, textAlign: "center", padding: "12px 24px", borderRadius: 10, fontSize: 14, fontWeight: 600, zIndex: 9999, boxShadow: "0 4px 12px rgba(0,0,0,0.2)" },
-    toastSuccess: { background: "#22c55e", color: "#fff" },
-    toastError: { background: "#ef4444", color: "#fff" },
-    emptyState: { textAlign: "center", padding: "60px 20px", color: "#6b7280" },
-    backBtn: { background: "none", border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 16px", fontSize: 14, cursor: "pointer", color: "#374151", marginBottom: 20 },
-    row: { display: "flex", gap: 12 },
-    dangerBtn: { background: "#fee2e2", color: "#991b1b", border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer" },
-    editBtn: { background: "#e0f2fe", color: "#0369a1", border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer" },
-    statsBar: { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: isMobile ? 8 : 12, marginBottom: 32 },
-    statCard: { background: "#fff", borderRadius: 10, padding: isMobile ? "14px 6px" : 16, textAlign: "center", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" },
-    statNum: { fontSize: 28, fontWeight: 800, color: "#0d2f6e" },
-    statLabel: { fontSize: 12, color: "#6b7280", marginTop: 4 },
-    spinner: { textAlign: "center", padding: "80px 20px", color: "#6b7280", fontSize: 16 },
-    heartBtn: { position: "absolute", top: 10, right: 10, background: "rgba(255,255,255,0.92)", border: "none", borderRadius: "50%", width: 34, height: 34, fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#9ca3af", boxShadow: "0 1px 4px rgba(0,0,0,0.15)" },
-    heartBtnActive: { color: "#ef4444" },
-    photoCountBadge: { position: "absolute", bottom: 10, left: 10, background: "rgba(13,47,110,0.85)", color: "#fff", fontSize: 11, padding: "2px 8px", borderRadius: 10 },
-    reviewCard: { padding: "12px 0", borderBottom: "1px solid #f0f0f0" },
-    convRow: { background: "#fff", borderRadius: 10, padding: "14px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, cursor: "pointer", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" },
-    chatBox: { background: "#fff", borderRadius: 12, padding: isMobile ? 14 : 20, boxShadow: "0 1px 4px rgba(0,0,0,0.08)", maxWidth: 640, margin: "0 auto" },
-    chatMessages: { display: "flex", flexDirection: "column", gap: 8, maxHeight: 420, overflowY: "auto", padding: "4px 2px" },
-    chatBubble: { maxWidth: "75%", padding: "10px 14px", borderRadius: 14, fontSize: 14, lineHeight: 1.4, overflowWrap: "anywhere" },
-    chatBubbleMine: { alignSelf: "flex-end", background: "#0d2f6e", color: "#fff", borderBottomRightRadius: 4 },
-    chatBubbleTheirs: { alignSelf: "flex-start", background: "#f1f5f9", color: "#1a1a1a", borderBottomLeftRadius: 4 },
-    adminTabBtn: { background: "#fff", border: "1px solid #d1d5db", color: "#374151", borderRadius: 8, padding: isMobile ? "8px 12px" : "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer" },
-    adminTabActive: { background: "#0d2f6e", border: "1px solid #0d2f6e", color: "#fff", borderRadius: 8, padding: isMobile ? "8px 12px" : "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer" },
-    adminRow: { background: "#fff", borderRadius: 10, padding: "14px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", boxShadow: "0 1px 3px rgba(0,0,0,0.06)", flexWrap: "wrap", gap: 10 },
-    adminRowText: { flex: "1 1 160px", minWidth: 0 },
-    adminRowActions: { display: "flex", gap: 8, flexShrink: 0 },
-    skeletonImg: { width: "100%", height: 190, background: "linear-gradient(90deg, #e5e7eb 25%, #f3f4f6 50%, #e5e7eb 75%)", backgroundSize: "200% 100%", animation: "shimmer 1.4s infinite" },
-    skeletonLine: { height: 12, background: "linear-gradient(90deg, #e5e7eb 25%, #f3f4f6 50%, #e5e7eb 75%)", backgroundSize: "200% 100%", animation: "shimmer 1.4s infinite", borderRadius: 4, margin: "8px 0" },
+  const filtersActiveCount = [filterVille !== "Toutes", filterDispo !== "Toutes", Boolean(filterChambres), Boolean(priceMin), Boolean(priceMax)].filter(Boolean).length;
+  const filtersActive = filtersActiveCount > 0 || Boolean(search.trim());
+  // Price as the visitor sees it: converted into the chosen currency and rounded, or the listing's
+  // own price when it can't be converted. `owner` is the price the owner set.
+  function priceInfo(l) {
+    const from = l.devise || "USD";
+    const amount = Number(l.prix) || 0;
+    const owner = formatMoney(amount, from);
+    const value = shownCurrency && from !== shownCurrency ? convertPrice(amount, from, shownCurrency, fx.rates) : null;
+    if (value == null) return { text: owner, devise: from, converted: false, owner };
+    return { text: formatMoney(roundPrice(value, shownCurrency), shownCurrency), devise: shownCurrency, converted: true, owner };
+  }
+  const rateIsRecent = fx?.updatedAt && Date.now() - new Date(fx.updatedAt).getTime() < 36 * 3600 * 1000;
+  const rateNote = fx
+    ? `Prix convertis au ${rateIsRecent ? "taux du jour" : "dernier taux connu"} (1 USD = ${fx.rates.CDF ? formatMoney(Math.round(fx.rates.CDF), "CDF") : formatMoney(fx.rates[availableCurrencies.find(c => c !== "USD")], availableCurrencies.find(c => c !== "USD"))}${fx.updatedAt ? `, mis à jour le ${formatDate(fx.updatedAt)}` : ""}).`
+    : "";
+  const showMessageBtn = Boolean(detail && currentUser && !canEdit);
+  const whatsappHref = detail ? `https://wa.me/${(detail.whatsapp || CONTACT_WHATSAPP).replace(/[^0-9]/g, "")}` : "";
+  const showContactBar = page === "detail" && Boolean(detail) && isMobile;
+  const activeConversation = page === "chat" ? conversations.find(c => c.id === selectedId) : null;
+  const gutter = isMobile ? 16 : 24;
+  const maxW = 1120 + gutter * 2;
+
+  const btn = {
+    display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, minHeight: 44, padding: "0 18px",
+    borderRadius: 12, fontSize: 15, fontWeight: 700, border: "1px solid transparent", textDecoration: "none",
+    whiteSpace: "nowrap", lineHeight: 1.2, cursor: "pointer", fontFamily: "inherit",
   };
+  const field = {
+    width: "100%", minHeight: 48, padding: "11px 14px", borderRadius: 12, border: `1px solid ${C.field}`, backgroundColor: "#fff",
+    fontSize: 16, color: C.ink, fontFamily: "inherit", lineHeight: 1.4,
+  };
+  const wrapPadding = isMobile ? "20px 16px 48px" : "36px 24px 72px";
+
+  const S = {
+    root: { minHeight: "100vh", display: "flex", flexDirection: "column", background: "#fff", color: C.ink, overflowWrap: "break-word", paddingBottom: showContactBar ? 84 : 0 },
+    main: { flex: 1, display: "flex", flexDirection: "column" },
+    pageWhite: { flex: 1 },
+    pageGrey: { flex: 1, background: C.soft },
+    wrap: { width: "100%", maxWidth: maxW, margin: "0 auto", padding: wrapPadding },
+    wrapNarrow: { width: "100%", maxWidth: 760 + gutter * 2, margin: "0 auto", padding: wrapPadding },
+    wrapDetail: { width: "100%", maxWidth: maxW, margin: "0 auto", padding: isMobile ? "8px 16px 48px" : "24px 24px 72px" },
+    wrapChat: { width: "100%", maxWidth: 760 + gutter * 2, margin: "0 auto", padding: isMobile ? "8px 16px 32px" : "24px 24px 64px" },
+    wrapForm: { width: "100%", maxWidth: 720 + gutter * 2, margin: "0 auto", padding: wrapPadding },
+    pageHead: { display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: isMobile ? 16 : 24 },
+    h1: { margin: 0, fontSize: isMobile ? 26 : 32, fontWeight: 800, color: C.navy, letterSpacing: "-0.02em", lineHeight: 1.2 },
+    h2: { margin: 0, fontSize: isMobile ? 21 : 26, fontWeight: 800, color: C.navy, letterSpacing: "-0.015em", lineHeight: 1.25 },
+    h3: { margin: "0 0 12px", fontSize: isMobile ? 18 : 20, fontWeight: 800, color: C.navy, letterSpacing: "-0.01em" },
+    sub: { margin: "6px 0 0", fontSize: 15, color: C.muted },
+
+    btnPrimary: { ...btn, background: C.green, color: "#fff" },
+    btnNavy: { ...btn, background: C.navy, color: "#fff" },
+    btnSecondary: { ...btn, background: "#fff", color: C.navy, border: `1px solid ${C.field}` },
+    btnDanger: { ...btn, background: "#fff", color: "#b91c1c", border: "1px solid #fecaca" },
+    btnLg: { minHeight: 52, fontSize: 16, padding: "0 24px", borderRadius: 14 },
+    btnSm: { minHeight: 40, fontSize: 14, padding: "0 14px", borderRadius: 10 },
+    block: { width: "100%" },
+    linkBtn: { background: "none", border: "none", padding: 0, color: C.navy, fontWeight: 700, fontSize: "inherit", cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 3, fontFamily: "inherit" },
+    backBtn: { ...btn, minHeight: 40, padding: "0 10px 0 4px", background: "transparent", color: C.navy, fontWeight: 600, marginBottom: 12, marginLeft: -4 },
+
+    field,
+    textarea: { ...field, minHeight: 120, resize: "vertical" },
+    label: { display: "block", fontSize: 14, fontWeight: 600, color: C.ink, marginBottom: 6 },
+    formGroup: { marginBottom: 18 },
+    formRow2: { display: "grid", gridTemplateColumns: "minmax(0, 2fr) minmax(0, 1fr)", gap: 12, marginBottom: 18 },
+    formRowEven: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12, marginBottom: 18 },
+    hint: { margin: "8px 0 0", fontSize: 13, color: C.muted, lineHeight: 1.45 },
+    panel: { background: "#fff", border: `1px solid ${C.line}`, borderRadius: 18, padding: isMobile ? 18 : 28 },
+    formError: { display: "flex", alignItems: "flex-start", gap: 10, background: "#fef2f2", color: "#991b1b", border: "1px solid #fecaca", borderRadius: 12, padding: "12px 14px", fontSize: 15, fontWeight: 600, marginBottom: 18, lineHeight: 1.4 },
+
+    // Header
+    nav: { position: "sticky", top: 0, zIndex: 100, background: "#fff", borderBottom: `1px solid ${C.line}` },
+    navInner: { maxWidth: maxW, margin: "0 auto", height: 64, padding: `0 ${gutter}px`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 },
+    logo: { fontSize: 22, fontWeight: 800, color: C.navy, letterSpacing: "-0.02em", textDecoration: "none", whiteSpace: "nowrap", flexShrink: 0 },
+    logoSpan: { color: C.greenBright },
+    navLinks: { display: "flex", alignItems: "center", gap: 2 },
+    navBtn: { ...btn, minHeight: 40, padding: "0 12px", borderRadius: 10, background: "transparent", color: C.ink, fontWeight: 600 },
+    navBtnActive: { background: C.soft, color: C.navy },
+    navCta: { ...btn, minHeight: 40, padding: "0 16px", borderRadius: 999, background: C.green, color: "#fff", marginLeft: 6 },
+    curBtn: { ...btn, minHeight: 44, padding: "0 12px", borderRadius: 12, background: "#fff", color: C.navy, border: `1px solid ${C.line}`, fontSize: 15, flexShrink: 0 },
+    navRight: { display: "flex", alignItems: "center", gap: 8, minWidth: 0 },
+    burger: { width: 44, height: 44, borderRadius: 12, border: `1px solid ${C.line}`, background: "#fff", color: C.navy, display: "flex", alignItems: "center", justifyContent: "center", padding: 0 },
+    menuBackdrop: { position: "fixed", top: 64, left: 0, right: 0, bottom: 0, background: "rgba(10, 31, 71, 0.35)", zIndex: 105 },
+    menuPanel: { position: "fixed", top: 64, left: 0, right: 0, zIndex: 110, background: "#fff", borderBottom: `1px solid ${C.line}`, boxShadow: "0 16px 32px rgba(10, 31, 71, 0.12)", padding: "6px 16px 16px", display: "flex", flexDirection: "column", maxHeight: "calc(100vh - 64px)", overflowY: "auto" },
+    menuItem: { display: "flex", alignItems: "center", gap: 14, width: "100%", minHeight: 52, padding: "0 8px", background: "transparent", border: "none", borderBottom: `1px solid ${C.soft}`, borderRadius: 0, fontSize: 16, fontWeight: 600, color: C.ink, textAlign: "left", fontFamily: "inherit" },
+    menuCta: { ...btn, minHeight: 50, borderRadius: 14, background: C.green, color: "#fff", marginTop: 12, width: "100%", fontSize: 16 },
+
+    toast: { position: "fixed", top: 76, left: 16, right: 16, margin: "0 auto", width: "fit-content", maxWidth: 520, display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 16px", borderRadius: 14, fontSize: 15, fontWeight: 600, lineHeight: 1.4, zIndex: 1000, boxShadow: "0 12px 32px rgba(10, 31, 71, 0.25)", color: "#fff", cursor: "pointer" },
+    toastSuccess: { background: C.navyDark },
+    toastError: { background: "#b42318" },
+
+    // Home
+    hero: { color: "#fff", padding: isMobile ? "36px 16px 48px" : "92px 24px 128px" },
+    heroInner: { maxWidth: 920, margin: "0 auto", textAlign: "center" },
+    heroEyebrow: { margin: "0 0 12px", fontSize: 13, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "#86efac" },
+    heroTitle: { margin: "0 auto 12px", maxWidth: 760, fontSize: isMobile ? 30 : 52, fontWeight: 800, lineHeight: 1.12, letterSpacing: "-0.025em", textWrap: "balance" },
+    heroSub: { margin: isMobile ? "0 0 24px" : "0 0 36px", fontSize: isMobile ? 16 : 19, color: "rgba(255, 255, 255, 0.86)" },
+    searchBox: isNarrow
+      ? { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, minmax(0, 1fr))", gap: 10, background: "#fff", borderRadius: 20, padding: 14, boxShadow: "0 20px 48px rgba(5, 18, 45, 0.35)", textAlign: "left", maxWidth: 720, margin: "0 auto" }
+      : { display: "flex", alignItems: "center", background: "#fff", borderRadius: 999, padding: 8, boxShadow: "0 20px 48px rgba(5, 18, 45, 0.35)", textAlign: "left", maxWidth: 880, margin: "0 auto" },
+    searchCell: isNarrow
+      ? { border: `1px solid ${C.field}`, borderRadius: 14, padding: "8px 14px", minWidth: 0 }
+      : { flex: "1 1 0", minWidth: 0, padding: "6px 24px", borderRadius: 999 },
+    searchDivider: { width: 1, height: 36, background: C.line, flexShrink: 0 },
+    searchLabel: { display: "block", fontSize: 12, fontWeight: 700, color: C.navy, letterSpacing: "0.02em", cursor: "pointer" },
+    searchControl: { width: "100%", border: "none", backgroundColor: "transparent", padding: "2px 0", fontSize: 16, color: C.ink, minHeight: 30, fontFamily: "inherit" },
+    searchBtn: { ...btn, background: C.green, color: "#fff", minHeight: isNarrow ? 52 : 56, borderRadius: isNarrow ? 14 : 999, padding: "0 28px", fontSize: 16, flexShrink: 0, gridColumn: isNarrow ? "1 / -1" : "auto" },
+    section: { width: "100%", maxWidth: maxW, margin: "0 auto", padding: isMobile ? `40px ${gutter}px` : `64px ${gutter}px` },
+    sectionHead: { display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12, marginBottom: isMobile ? 18 : 28 },
+    softBand: { background: C.soft },
+    steps: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, minmax(0, 1fr))", gap: isMobile ? 12 : 24 },
+    step: { background: "#fff", border: `1px solid ${C.line}`, borderRadius: 18, padding: isMobile ? 18 : 28, display: "flex", flexDirection: isMobile ? "row" : "column", gap: isMobile ? 14 : 18, alignItems: "flex-start" },
+    stepIcon: { width: 48, height: 48, borderRadius: 14, background: C.greenSoft, color: C.green, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 },
+    stepTitle: { margin: "0 0 4px", fontSize: 17, fontWeight: 700, color: C.navy },
+    stepText: { margin: 0, fontSize: 15, color: C.muted, lineHeight: 1.5 },
+    landlord: { background: `linear-gradient(135deg, ${C.navy} 0%, #164394 100%)`, color: "#fff", borderRadius: 24, padding: isMobile ? "28px 20px" : "48px 56px", display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: isMobile ? "stretch" : "center", justifyContent: "space-between", gap: isMobile ? 20 : 32 },
+
+    // Footer
+    footer: { background: C.soft, borderTop: `1px solid ${C.line}`, color: C.muted, fontSize: 15 },
+    footerInner: { maxWidth: maxW, margin: "0 auto", padding: isMobile ? "36px 16px 24px" : "48px 24px 32px", display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr)", gap: isMobile ? 28 : 40 },
+    footerTitle: { margin: "0 0 10px", fontSize: 13, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.navy },
+    footerLink: { background: "none", border: "none", padding: "6px 0", color: C.ink, fontSize: 15, cursor: "pointer", display: "block", textAlign: "left", fontFamily: "inherit" },
+    footerBottom: { maxWidth: maxW, margin: "0 auto", padding: `0 ${gutter}px 28px`, fontSize: 13 },
+
+    // Listings page
+    filterPanel: { background: "#fff", border: `1px solid ${C.line}`, borderRadius: 18, padding: isMobile ? 12 : 16, boxShadow: "0 1px 2px rgba(16, 24, 40, 0.04)" },
+    filterTop: { display: "flex", gap: 10 },
+    searchWrap: { position: "relative", flex: 1, minWidth: 0 },
+    searchIcon: { position: "absolute", left: 14, top: 14, color: C.muted, pointerEvents: "none" },
+    filterToggle: { ...btn, minHeight: 48, flexShrink: 0, padding: "0 14px", background: "#fff", color: C.navy, border: `1px solid ${C.field}` },
+    filterGrid: { display: "grid", gridTemplateColumns: isMobile ? "repeat(2, minmax(0, 1fr))" : isNarrow ? "repeat(3, minmax(0, 1fr))" : "repeat(6, minmax(0, 1fr))", gap: isMobile ? 10 : 12, marginTop: 12 },
+    filterLabel: { display: "block", fontSize: 13, fontWeight: 600, color: C.muted, marginBottom: 4 },
+    resultsBar: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, margin: isMobile ? "16px 0 18px" : "20px 0 24px", minHeight: 28 },
+    grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: isMobile ? 28 : "36px 24px" },
+
+    // Listing card
+    card: { position: "relative", minWidth: 0 },
+    cardLink: { display: "block", color: "inherit", textDecoration: "none", borderRadius: 16 },
+    cardPhoto: { position: "relative", aspectRatio: "4 / 3", borderRadius: 16, overflow: "hidden", background: "#e9edf3" },
+    cardImg: { width: "100%", height: "100%", objectFit: "cover", display: "block" },
+    cardPlaceholder: { width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#9aa6bd", background: "linear-gradient(135deg, #e6ecf7, #f3f6fb)" },
+    cardBody: { padding: "12px 2px 0" },
+    cardPrice: { margin: 0, fontSize: 20, fontWeight: 800, color: C.navy, letterSpacing: "-0.01em", lineHeight: 1.25, display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "0 8px" },
+    priceUnit: { fontSize: 14, fontWeight: 500, color: C.muted, letterSpacing: 0 },
+    ownerPrice: { margin: "6px 0 0", fontSize: 13, color: C.muted, lineHeight: 1.4 },
+    fieldSymbol: { position: "absolute", right: 14, top: 0, bottom: 0, display: "flex", alignItems: "center", fontSize: 15, fontWeight: 700, color: C.muted, pointerEvents: "none" },
+    cardTitle: { margin: "2px 0 0", fontSize: 15, fontWeight: 600, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+    cardMeta: { display: "flex", alignItems: "center", gap: 6, margin: "4px 0 0", fontSize: 14, color: C.muted, minWidth: 0 },
+    ellipsis: { minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+    cardFacts: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: "4px 14px", marginTop: 6, fontSize: 14, color: C.muted },
+    fact: { display: "inline-flex", alignItems: "center", gap: 6 },
+    verifiedSmall: { display: "inline-flex", alignItems: "center", gap: 4, color: C.green, fontWeight: 600 },
+    statusPill: { position: "absolute", top: 12, left: 12, display: "inline-flex", alignItems: "center", gap: 6, background: "rgba(255, 255, 255, 0.95)", color: C.ink, fontSize: 12, fontWeight: 700, padding: "5px 10px", borderRadius: 999, boxShadow: "0 1px 4px rgba(10, 31, 71, 0.15)" },
+    dot: { width: 8, height: 8, borderRadius: "50%", flexShrink: 0 },
+    photoCount: { position: "absolute", bottom: 12, left: 12, display: "inline-flex", alignItems: "center", gap: 4, background: "rgba(10, 31, 71, 0.72)", color: "#fff", fontSize: 12, fontWeight: 700, padding: "4px 9px", borderRadius: 999 },
+    heartBtn: { position: "absolute", top: 4, right: 4, width: 44, height: 44, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: "none", padding: 0, color: "#fff", borderRadius: "50%" },
+    cardActions: { display: "flex", gap: 8, marginTop: 12 },
+    skeletonPhoto: { aspectRatio: "4 / 3", borderRadius: 16 },
+    skeletonLine: { height: 12, borderRadius: 6, margin: "10px 0 0" },
+
+    // Listing page
+    galleryWrap: { position: "relative", margin: isMobile ? "0 -16px" : 0, borderRadius: isMobile ? 0 : 20, overflow: "hidden", background: "#e9edf3" },
+    gallerySlide: isMobile ? { aspectRatio: "4 / 3" } : { height: 480 },
+    galleryImg: { width: "100%", height: "100%", objectFit: "cover", display: "block" },
+    galleryCounter: { position: "absolute", right: 12, bottom: 12, background: "rgba(10, 31, 71, 0.72)", color: "#fff", fontSize: 13, fontWeight: 700, padding: "4px 10px", borderRadius: 999 },
+    galleryArrow: { position: "absolute", top: "calc(50% - 22px)", width: 44, height: 44, borderRadius: "50%", border: "none", background: "rgba(255, 255, 255, 0.95)", color: C.navy, display: "flex", alignItems: "center", justifyContent: "center", padding: 0, boxShadow: "0 2px 8px rgba(10, 31, 71, 0.2)" },
+    dots: { position: "absolute", left: 0, right: 0, bottom: 16, display: "flex", justifyContent: "center", gap: 6, pointerEvents: "none" },
+    thumbs: { display: "flex", gap: 10, marginTop: 12, overflowX: "auto", paddingBottom: 4 },
+    thumb: { flex: "0 0 auto", width: 96, height: 72, padding: 0, borderRadius: 12, overflow: "hidden", background: "none" },
+    detailLayout: isNarrow ? { marginTop: isMobile ? 20 : 28 } : { display: "grid", gridTemplateColumns: "minmax(0, 1fr) 360px", gap: 56, alignItems: "start", marginTop: 32 },
+    detailTitle: { margin: 0, fontSize: isMobile ? 25 : 32, fontWeight: 800, color: C.navy, letterSpacing: "-0.02em", lineHeight: 1.2 },
+    detailLoc: { display: "flex", alignItems: "flex-start", gap: 6, margin: "8px 0 0", fontSize: 16, color: C.muted },
+    detailRating: { display: "flex", alignItems: "center", gap: 6, margin: "6px 0 0", fontSize: 15, color: C.ink },
+    bigPrice: { margin: 0, fontSize: 28, fontWeight: 800, color: C.navy, letterSpacing: "-0.02em", lineHeight: 1.15, display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "2px 10px" },
+    priceRow: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginTop: 16 },
+    actionRow: { display: "flex", gap: 8, flexWrap: "wrap", marginTop: 16 },
+    divider: { border: "none", borderTop: `1px solid ${C.line}`, margin: isMobile ? "22px 0" : "28px 0" },
+    infoGrid: { display: "grid", gridTemplateColumns: isMobile ? "repeat(2, minmax(0, 1fr))" : "repeat(3, minmax(0, 1fr))", gap: 10 },
+    infoItem: { display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", background: C.soft, borderRadius: 14, minWidth: 0 },
+    infoIcon: { width: 36, height: 36, borderRadius: 10, background: "#fff", color: C.navy, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 },
+    detailSection: { marginTop: isMobile ? 30 : 40 },
+    description: { margin: 0, fontSize: 16, lineHeight: 1.7, color: C.ink, whiteSpace: "pre-line" },
+    aside: { position: "sticky", top: 88 },
+    asideCard: { border: `1px solid ${C.line}`, borderRadius: 20, padding: 24, boxShadow: "0 12px 32px rgba(10, 31, 71, 0.08)", background: "#fff", display: "grid", gap: 16 },
+    ownerCard: { display: "flex", alignItems: "center", gap: 12, padding: 14, border: `1px solid ${C.line}`, borderRadius: 16, minWidth: 0, background: "#fff" },
+    avatar: { width: 44, height: 44, borderRadius: "50%", background: "#e6ecf7", color: C.navy, fontWeight: 800, fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 },
+    ownerName: { margin: 0, fontSize: 16, fontWeight: 700, color: C.ink },
+    verifiedLine: { display: "flex", alignItems: "center", gap: 5, margin: "2px 0 0", fontSize: 14, fontWeight: 600, color: C.green },
+    statusBadge: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 700, padding: "5px 11px", borderRadius: 999, whiteSpace: "nowrap" },
+    statusOn: { background: C.greenSoft, color: "#166534" },
+    statusOff: { background: "#fef2f2", color: "#991b1b" },
+    ownerTools: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, background: C.soft, border: `1px solid ${C.line}`, borderRadius: 16, padding: "14px 16px", marginTop: 24 },
+    contactBar: { position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 90, background: "#fff", borderTop: `1px solid ${C.line}`, boxShadow: "0 -8px 24px rgba(10, 31, 71, 0.08)", padding: "10px 16px calc(10px + env(safe-area-inset-bottom))", display: "flex", alignItems: "center", gap: 10 },
+    mapFrame: { width: "100%", height: isMobile ? 220 : 300, border: 0, borderRadius: 16, display: "block", background: C.soft },
+    reviewItem: { display: "flex", gap: 12, padding: "16px 0", borderTop: `1px solid ${C.line}` },
+    starBtn: { width: 44, height: 44, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", padding: 0, borderRadius: 10 },
+
+    // Forms
+    authCard: { width: "100%", maxWidth: 440, margin: "0 auto", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 22, padding: isMobile ? "28px 20px" : "40px 36px", boxShadow: "0 12px 32px rgba(10, 31, 71, 0.06)" },
+    formSection: { background: "#fff", border: `1px solid ${C.line}`, borderRadius: 18, padding: isMobile ? 18 : 28, marginBottom: 16 },
+    formSectionTitle: { margin: "0 0 16px", fontSize: 18, fontWeight: 700, color: C.navy },
+    dropzone: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, minHeight: 132, padding: 20, border: `2px dashed ${C.field}`, borderRadius: 16, background: C.soft, color: C.navy, textAlign: "center", cursor: "pointer" },
+    photoGrid: { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10, marginTop: 14 },
+    photoThumb: { position: "relative", aspectRatio: "4 / 3", borderRadius: 12, overflow: "hidden", background: C.soft },
+    photoMainBadge: { position: "absolute", left: 6, bottom: 6, background: C.navy, color: "#fff", fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 999 },
+    photoRemove: { position: "absolute", top: 4, right: 4, width: 40, height: 40, borderRadius: "50%", border: "2px solid #fff", background: "rgba(10, 31, 71, 0.8)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 },
+    progress: { display: "flex", alignItems: "center", gap: 8, margin: "10px 0 0", fontSize: 14, color: C.navy, fontWeight: 600 },
+
+    // Messages, chat, admin
+    listCard: { background: "#fff", border: `1px solid ${C.line}`, borderRadius: 18, overflow: "hidden" },
+    convRow: { display: "flex", alignItems: "center", gap: 14, width: "100%", padding: isMobile ? "14px 16px" : "16px 20px", background: "#fff", border: "none", textAlign: "left", color: C.ink, cursor: "pointer", fontFamily: "inherit", fontSize: 16 },
+    chatCard: { background: "#fff", border: `1px solid ${C.line}`, borderRadius: 20, overflow: "hidden", display: "flex", flexDirection: "column" },
+    chatHead: { display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderBottom: `1px solid ${C.line}`, minWidth: 0 },
+    chatMessages: { display: "flex", flexDirection: "column", gap: 8, height: isMobile ? "calc(100vh - 330px)" : 460, minHeight: 280, overflowY: "auto", padding: 16, background: "#fbfcfe" },
+    bubble: { maxWidth: "80%", padding: "9px 14px 7px", borderRadius: 18, fontSize: 15, lineHeight: 1.45, overflowWrap: "anywhere" },
+    bubbleMine: { alignSelf: "flex-end", background: C.navy, color: "#fff", borderBottomRightRadius: 6 },
+    bubbleTheirs: { alignSelf: "flex-start", background: "#eef1f6", color: C.ink, borderBottomLeftRadius: 6 },
+    bubbleTime: { display: "block", fontSize: 11, marginTop: 2, opacity: 0.7, textAlign: "right" },
+    chatForm: { display: "flex", gap: 8, padding: 12, borderTop: `1px solid ${C.line}`, background: "#fff" },
+    segmented: { display: "flex", gap: 4, padding: 4, background: "#e9edf3", borderRadius: 14, marginBottom: 20, overflowX: "auto", width: isMobile ? "100%" : "fit-content", maxWidth: "100%" },
+    segBtn: { ...btn, minHeight: 40, padding: "0 14px", borderRadius: 10, background: "transparent", color: C.muted, fontSize: 14, flex: isMobile ? "1 0 auto" : "0 0 auto" },
+    segBtnActive: { background: "#fff", color: C.navy, boxShadow: "0 1px 3px rgba(10, 31, 71, 0.12)" },
+    adminRow: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 12, padding: isMobile ? "14px 16px" : "16px 20px" },
+    adminRowText: { flex: "1 1 180px", minWidth: 0 },
+    adminRowActions: { display: "flex", gap: 8, flexShrink: 0 },
+    adminThumb: { width: 56, height: 42, borderRadius: 8, objectFit: "cover", background: C.soft, flexShrink: 0, display: "block" },
+    meta: { margin: "2px 0 0", fontSize: 14, color: C.muted },
+    verifiedPill: { display: "inline-flex", alignItems: "center", gap: 4, background: C.greenSoft, color: "#166534", fontSize: 12, fontWeight: 700, padding: "2px 8px", borderRadius: 999, verticalAlign: "middle", marginLeft: 6 },
+  };
+
+  const cardProps = l => ({
+    listing: l,
+    S,
+    href: routeHash("detail", l.id),
+    onOpen: linkTo("detail", l.id),
+    isFav: favorites.has(l.id),
+    onToggleFav: () => toggleFavorite(l.id),
+    verified: verifiedOwners.has(l.owner_id),
+    price: priceInfo(l),
+  });
+
+  const loginPrompt = text => (
+    <EmptyState icon="user" text={text}>
+      <button className="hov-dim" style={S.btnPrimary} onClick={() => nav("auth")}>Se connecter</button>
+    </EmptyState>
+  );
+
+  const navItems = currentUser
+    ? [
+        ["listings", "Annonces", "home"],
+        ["favorites", "Favoris", "heart"],
+        ["messages", "Messages", "message"],
+        ...(isAdmin ? [["admin", "Admin", "shield"]] : []),
+        ["my-listings", "Mes annonces", "list"],
+      ]
+    : [["listings", "Annonces", "home"]];
+  const isCurrent = p => page === p || (p === "messages" && page === "chat") || (p === "listings" && page === "detail");
+
+  const ownerCard = detail && (
+    <div style={S.ownerCard} data-testid="owner-card">
+      <div style={S.avatar} aria-hidden="true">{initial(detail.owner_name)}</div>
+      <div style={{ minWidth: 0 }}>
+        <p style={S.ownerName}>{detail.owner_name || "Privé"}</p>
+        {ownerProfile?.verified ? (
+          <p style={S.verifiedLine} data-testid="verified-badge"><Icon name="verified" size={17} /> Propriétaire vérifié</p>
+        ) : (
+          <p style={{ ...S.meta, marginTop: 0 }}>Propriétaire</p>
+        )}
+      </div>
+    </div>
+  );
+
+  // A listing's price, big. When converted, one discreet line gives the price the owner set.
+  function bigPriceBlock(l, style) {
+    const info = priceInfo(l);
+    return (
+      <div style={{ minWidth: 0 }}>
+        <p style={{ ...S.bigPrice, ...style }}>
+          <span data-testid="price" key={info.devise} className="price-fade">{info.text}<span style={S.priceUnit}>/mois</span></span>
+        </p>
+        {info.converted && <p style={S.ownerPrice} data-testid="owner-price">Prix fixé par le propriétaire : {info.owner}</p>}
+      </div>
+    );
+  }
+
+  // Price, owner and contact buttons: a column on the right on computers, under the title on tablets.
+  const contactCard = detail && (
+    <div style={S.asideCard}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        {bigPriceBlock(detail)}
+        {statusBadge(detail.disponible)}
+      </div>
+      {ownerCard}
+      <a href={whatsappHref} target="_blank" rel="noreferrer" className="hov-dim" style={{ ...S.btnPrimary, ...S.btnLg }}>
+        <Icon name="whatsapp" size={22} />Contacter sur WhatsApp
+      </a>
+      {showMessageBtn && (
+        <button className="hov-soft" style={{ ...S.btnSecondary, ...S.btnLg }} onClick={() => startConversation(detail)}>
+          <Icon name="message" size={20} />Message au propriétaire
+        </button>
+      )}
+    </div>
+  );
+
+  function statusBadge(disponible) {
+    return (
+    <span style={{ ...S.statusBadge, ...(disponible ? S.statusOn : S.statusOff) }}>
+      <span style={{ ...S.dot, background: disponible ? C.greenBright : "#ef4444" }} />
+      {disponible ? "Disponible" : "Occupée"}
+    </span>
+    );
+  }
 
   return (
     <div style={S.root}>
-      <style>{`
-        @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
-        button { transition: transform 0.12s ease, filter 0.12s ease; }
-        button:active { transform: scale(0.97); }
-        .listing-card { transition: transform 0.15s ease, box-shadow 0.15s ease; animation: fadeIn 0.3s ease; }
-        .listing-card:hover { transform: translateY(-3px); box-shadow: 0 6px 16px rgba(13,47,110,0.12); }
-        .nav-menu-mobile button { text-align: left; width: 100%; }
-      `}</style>
-
-      {/* NAV — on small screens the links only show when the ☰ menu is open */}
-      <nav style={S.nav}>
-        <span style={S.logo} onClick={() => nav("home")}>Immo<span style={S.logoSpan}>Congo</span></span>
-        {compactNav && (
-          <button
-            aria-label="Ouvrir le menu"
-            aria-expanded={menuOpen}
-            onClick={() => setMenuOpen(o => !o)}
-            style={S.burger}
-          >
-            {menuOpen ? "✕" : "☰"}
-          </button>
-        )}
-        {(!compactNav || menuOpen) && (
-          <div className={compactNav ? "nav-menu-mobile" : undefined} style={compactNav ? S.navLinksMobile : S.navLinks}>
-            <button style={S.navBtn} onClick={() => nav("listings")}>Annonces</button>
-            {currentUser && <button style={S.navBtn} onClick={() => nav("favorites")}>♥ Favoris</button>}
-            {currentUser && <button style={S.navBtn} onClick={() => nav("messages")}>💬 Messages</button>}
-            {isAdmin && <button style={S.navBtn} onClick={() => nav("admin")}>⚙️ Admin</button>}
-            {currentUser ? (
-              <>
-                <button style={S.navBtn} onClick={() => nav("my-listings")}>Mes annonces</button>
-                <button style={S.navBtnPrimary} onClick={() => { setEditId(null); setPostForm(DEFAULT_POST_FORM); clearFormPhotos(); nav("post"); }}>+ Publier</button>
-                <button style={S.navBtn} onClick={logout}>Déconnexion</button>
-              </>
-            ) : (
-              <>
-                <button style={S.navBtn} onClick={() => { setAuthMode("login"); nav("auth"); }}>Connexion</button>
-                <button style={S.navBtnPrimary} onClick={() => { setAuthMode("register"); nav("auth"); }}>Créer un compte</button>
-              </>
-            )}
+      {/* HEADER — on small screens the links only show when the ☰ menu is open */}
+      <nav style={S.nav} aria-label="Menu principal">
+        <div style={S.navInner}>
+          <a href="#/" onClick={linkTo("home")} style={S.logo} aria-label="ImmoCongo – accueil">Immo<span style={S.logoSpan}>Congo</span></a>
+          <div style={S.navRight}>
+          {shownCurrency && (
+            <button type="button" className="hov-soft" style={S.curBtn} aria-haspopup="dialog" aria-expanded={currencyOpen} onClick={() => setCurrencyOpen(true)} data-testid="currency-button">
+              <span className="sr-only">Devise : </span>{currencySymbol(shownCurrency)} {shownCurrency}
+            </button>
+          )}
+          {compactNav ? (
+            <button
+              aria-label="Ouvrir le menu"
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen(o => !o)}
+              className="hov-soft"
+              style={S.burger}
+            >
+              <Icon name={menuOpen ? "close" : "menu"} size={22} />
+            </button>
+          ) : (
+            <div style={S.navLinks}>
+              {navItems.map(([p, label]) => (
+                <button key={p} className="hov-soft" style={{ ...S.navBtn, ...(isCurrent(p) ? S.navBtnActive : {}) }} aria-current={isCurrent(p) ? "page" : undefined} onClick={() => nav(p)}>{label}</button>
+              ))}
+              {currentUser ? (
+                <>
+                  <button className="hov-dim" style={S.navCta} onClick={startNewListing}><Icon name="plus" size={18} />Publier</button>
+                  <button className="hov-soft" style={S.navBtn} onClick={logout}>Déconnexion</button>
+                </>
+              ) : (
+                <>
+                  <button className="hov-soft" style={{ ...S.navBtn, ...(page === "auth" && authMode === "login" ? S.navBtnActive : {}) }} onClick={() => { setAuthMode("login"); nav("auth"); }}>Connexion</button>
+                  <button className="hov-dim" style={S.navCta} onClick={() => { setAuthMode("register"); nav("auth"); }}>Créer un compte</button>
+                </>
+              )}
+            </div>
+          )}
           </div>
+        </div>
+        {compactNav && menuOpen && (
+          <>
+            <div style={S.menuBackdrop} onClick={() => setMenuOpen(false)} />
+            <div style={S.menuPanel} className="nav-menu-mobile">
+              {navItems.map(([p, label, icon]) => (
+                <button key={p} className="hov-soft" style={{ ...S.menuItem, ...(isCurrent(p) ? { color: C.navy } : {}) }} aria-current={isCurrent(p) ? "page" : undefined} onClick={() => nav(p)}>
+                  <Icon name={icon} size={20} style={{ color: C.navy }} />{label}
+                </button>
+              ))}
+              {currentUser ? (
+                <>
+                  <button className="hov-soft" style={S.menuItem} onClick={logout}><Icon name="logout" size={20} style={{ color: C.navy }} />Déconnexion</button>
+                  <button className="hov-dim" style={S.menuCta} onClick={startNewListing}><Icon name="plus" size={20} />Publier</button>
+                </>
+              ) : (
+                <>
+                  <button className="hov-soft" style={S.menuItem} onClick={() => { setAuthMode("login"); nav("auth"); }}><Icon name="login" size={20} style={{ color: C.navy }} />Connexion</button>
+                  <button className="hov-dim" style={S.menuCta} onClick={() => { setAuthMode("register"); nav("auth"); }}>Créer un compte</button>
+                </>
+              )}
+            </div>
+          </>
         )}
       </nav>
 
-      {toast && <div style={{ ...S.toast, ...(toast.type === "error" ? S.toastError : S.toastSuccess) }}>{toast.msg}</div>}
-
-      {/* HOME */}
-      {page === "home" && (
-        <>
-          <div style={S.hero}>
-            <p style={{ fontSize: 12, letterSpacing: 3, textTransform: "uppercase", opacity: 0.7, margin: "0 0 12px" }}>🇨🇩 République Démocratique du Congo</p>
-            <h1 style={S.heroTitle}>Trouvez votre maison<br />à Fungurume & environs</h1>
-            <p style={S.heroSub}>La plateforme de location immobilière du Katanga</p>
-            <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-              <button style={S.btnGreen} onClick={() => nav("listings")}>Voir les annonces</button>
-              <button style={S.btnOutline} onClick={() => currentUser ? nav("post") : (setAuthMode("register"), nav("auth"))}>Publier ma maison</button>
-            </div>
-          </div>
-          <div style={S.section}>
-            <div style={S.statsBar}>
-              <div style={S.statCard}><div style={S.statNum}>{listings.length}</div><div style={S.statLabel}>Annonces publiées</div></div>
-              <div style={S.statCard}><div style={S.statNum}>{listings.filter(l => l.disponible).length}</div><div style={S.statLabel}>Disponibles</div></div>
-              <div style={S.statCard}><div style={S.statNum}>{[...new Set(listings.map(l => l.ville))].length}</div><div style={S.statLabel}>Villes couvertes</div></div>
-            </div>
-            <h2 style={S.sectionTitle}>Annonces récentes</h2>
-            {loading ? (
-              <div style={S.grid}>{Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} S={S} />)}</div>
-            ) : (
-              <div style={S.grid}>{listings.slice(0, 3).map(l => <ListingCard key={l.id} listing={l} onClick={() => nav("detail", l.id)} S={S} isFav={favorites.has(l.id)} onToggleFav={() => toggleFavorite(l.id)} />)}</div>
-            )}
-            <div style={{ textAlign: "center", marginTop: 32 }}>
-              <button style={S.btnGreen} onClick={() => nav("listings")}>Voir toutes les annonces →</button>
-            </div>
-          </div>
-          <footer style={{ background: "#0d2f6e", color: "#c7d9f7", padding: "40px 20px", textAlign: "center" }}>
-            <p style={{ margin: "0 0 8px", fontSize: 14, opacity: 0.7 }}>📞 Contact WhatsApp</p>
-            <a href="https://wa.me/264816032560" target="_blank" rel="noreferrer" style={{ color: "#4ade80", fontSize: 20, fontWeight: 700, textDecoration: "none" }}>+264 816 032 560</a>
-            <p style={{ margin: "16px 0 0", fontSize: 12, opacity: 0.5 }}>© 2026 ImmoCongo – Fungurume, Katanga, DRC</p>
-          </footer>
-        </>
+      {toast && (
+        <div
+          className="toast"
+          role={toast.type === "error" ? "alert" : "status"}
+          onClick={() => setToast(null)}
+          style={{ ...S.toast, ...(toast.type === "error" ? S.toastError : S.toastSuccess) }}
+        >
+          <Icon name={toast.type === "error" ? "alert" : "checkCircle"} size={20} style={{ color: toast.type === "error" ? "#fecaca" : "#4ade80", marginTop: 1 }} />
+          <span>{toast.msg}</span>
+        </div>
       )}
 
-      {/* LISTINGS */}
-      {page === "listings" && (
-        <>
-          <div style={S.filterBar}>
-            <span style={{ fontWeight: 700, fontSize: 15, color: "#0d2f6e", ...(isMobile ? { order: -2 } : {}) }}>🔍 Filtres</span>
-            <input
-              style={{ ...S.select, flex: "1 1 180px", minWidth: 140, cursor: "text", ...S.filterFull }}
-              type="text"
-              placeholder="Rechercher (titre, lieu...)"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-            />
-            <select style={{ ...S.select, ...S.filterHalf }} value={filterVille} onChange={e => setFilterVille(e.target.value)}>
-              <option value="Toutes">Toutes les villes</option>
-              {VILLES.map(v => <option key={v}>{v}</option>)}
-            </select>
-            <select style={{ ...S.select, ...S.filterHalf }} value={filterDispo} onChange={e => setFilterDispo(e.target.value)}>
-              <option value="Toutes">Tout statut</option>
-              <option value="Disponible">Disponible</option>
-              <option value="Occupée">Occupée</option>
-            </select>
-            <select style={{ ...S.select, ...S.filterFull }} value={sortBy} onChange={e => setSortBy(e.target.value)}>
-              <option value="recent">Plus récentes</option>
-              <option value="price_asc">Prix croissant</option>
-              <option value="price_desc">Prix décroissant</option>
-            </select>
-            <input style={{ ...S.select, width: 90, cursor: "text", ...S.filterHalf }} type="number" placeholder="Prix min" value={priceMin} onChange={e => setPriceMin(e.target.value)} />
-            <input style={{ ...S.select, width: 90, cursor: "text", ...S.filterHalf }} type="number" placeholder="Prix max" value={priceMax} onChange={e => setPriceMax(e.target.value)} />
-            <span style={{ fontSize: 13, color: "#6b7280", marginLeft: "auto", ...(isMobile ? { order: -1, textAlign: "right" } : {}) }}>{sorted.length} annonce{sorted.length !== 1 ? "s" : ""}</span>
-          </div>
-          <div style={S.section}>
-            {loading ? (
-              <div style={S.grid}>{Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} S={S} />)}</div>
-            ) : sorted.length === 0 ? (
-              <div style={S.emptyState}><p style={{ fontSize: 40 }}>🏠</p><p>Aucune annonce ne correspond à vos critères.</p></div>
-            ) : (
-              <>
-                <div style={S.grid}>{visible.map(l => <ListingCard key={l.id} listing={l} onClick={() => nav("detail", l.id)} S={S} isFav={favorites.has(l.id)} onToggleFav={() => toggleFavorite(l.id)} />)}</div>
-                {visibleCount < sorted.length && (
-                  <div style={{ textAlign: "center", marginTop: 28 }}>
-                    <button style={S.btnOutlineDark} onClick={() => setVisibleCount(c => c + PAGE_SIZE)}>Charger plus ({sorted.length - visibleCount} restantes)</button>
+      {currencyOpen && shownCurrency && (
+        <CurrencySheet
+          groups={CURRENCY_GROUPS
+            .map(([title, codes]) => ({ title, options: codes.filter(c => availableCurrencies.includes(c)).map(code => ({ code, ...CURRENCY_INFO[code] })) }))
+            .filter(g => g.options.length > 0)}
+          current={shownCurrency}
+          onPick={changeCurrency}
+          onClose={() => setCurrencyOpen(false)}
+          isMobile={isMobile}
+          note={rateNote}
+        />
+      )}
+
+      {confirmState && (
+        <ConfirmDialog
+          title={confirmState.title}
+          message={confirmState.message}
+          confirmLabel={confirmState.confirmLabel}
+          danger={confirmState.danger}
+          onConfirm={() => closeConfirm(true)}
+          onCancel={() => closeConfirm(false)}
+        />
+      )}
+
+      <main style={S.main}>
+        {/* HOME */}
+        {page === "home" && (
+          <div style={S.pageWhite}>
+            <section className="hero" style={S.hero}>
+              <div style={S.heroInner}>
+                <p style={S.heroEyebrow}>Katanga · RD Congo</p>
+                <h1 style={S.heroTitle}>Trouvez votre maison à Fungurume & environs</h1>
+                <p style={S.heroSub}>La plateforme de location immobilière du Katanga</p>
+                <form onSubmit={searchFromHome} style={S.searchBox} role="search" aria-label="Rechercher une maison" data-testid="home-search">
+                  <div className="search-cell" style={S.searchCell}>
+                    <label htmlFor="home-ville" style={S.searchLabel}>Ville</label>
+                    <select id="home-ville" name="ville" defaultValue={filterVille} className="search-control" style={S.searchControl}>
+                      <option value="Toutes">Toutes les villes</option>
+                      {VILLES.map(v => <option key={v}>{v}</option>)}
+                    </select>
                   </div>
-                )}
-              </>
-            )}
-          </div>
-        </>
-      )}
+                  {!isNarrow && <span style={S.searchDivider} />}
+                  <div className="search-cell" style={S.searchCell}>
+                    <label htmlFor="home-prix" style={S.searchLabel}>Prix max par mois<span className="sr-only"> en {filterCurrency}</span></label>
+                    <div style={{ position: "relative" }}>
+                      <input key={filterCurrency} id="home-prix" name="prixMax" type="number" inputMode="numeric" min="0" placeholder={filterCurrency === "CDF" ? "Ex : 1 000 000" : "Ex : 500"} defaultValue={priceMax} className="search-control" style={{ ...S.searchControl, paddingRight: 36 }} />
+                      <span style={{ ...S.fieldSymbol, right: 0, color: C.navy }} data-testid="field-currency" aria-hidden="true">{currencySymbol(filterCurrency)}</span>
+                    </div>
+                  </div>
+                  {!isNarrow && <span style={S.searchDivider} />}
+                  <div className="search-cell" style={S.searchCell}>
+                    <label htmlFor="home-chambres" style={S.searchLabel}>Chambres</label>
+                    <select id="home-chambres" name="chambres" defaultValue={filterChambres} className="search-control" style={S.searchControl}>
+                      {CHAMBRES_OPTIONS.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
+                    </select>
+                  </div>
+                  <button type="submit" className="hov-dim" style={S.searchBtn}><Icon name="search" size={20} />Rechercher</button>
+                </form>
+              </div>
+            </section>
 
-      {/* DETAIL */}
-      {page === "detail" && detail && (
-        <div style={S.section}>
-          <button style={S.backBtn} onClick={() => nav("listings")}>← Retour aux annonces</button>
+            <section style={S.section} aria-labelledby="home-latest">
+              <div style={S.sectionHead}>
+                <h2 id="home-latest" style={S.h2}>Annonces récentes</h2>
+                {!isMobile && <button className="hov-soft" style={{ ...S.btnSecondary, ...S.btnSm }} onClick={() => nav("listings")}>Voir toutes les annonces<Icon name="arrowRight" size={18} /></button>}
+              </div>
+              {loading ? (
+                <div style={S.grid}>{Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} S={S} />)}</div>
+              ) : listings.length === 0 ? (
+                <EmptyState icon="home" text="Aucune annonce pour le moment." />
+              ) : (
+                <div style={S.grid}>{listings.slice(0, HOME_LATEST).map(l => <ListingCard key={l.id} {...cardProps(l)} />)}</div>
+              )}
+              {isMobile && (
+                <button className="hov-soft" style={{ ...S.btnSecondary, ...S.btnLg, ...S.block, marginTop: 28 }} onClick={() => nav("listings")}>Voir toutes les annonces<Icon name="arrowRight" size={18} /></button>
+              )}
+            </section>
 
-          {detailPhotos.length > 0 ? (
-            <div>
-              <img src={detailPhotos[activePhoto]} alt={detail.titre} style={{ width: "100%", maxHeight: 420, objectFit: "cover", borderRadius: 12 }} loading="lazy" />
-              {detailPhotos.length > 1 && (
-                <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-                  {detailPhotos.map((img, i) => (
-                    <img key={i} src={img} alt="" loading="lazy" onClick={() => setActivePhoto(i)}
-                      style={{ width: 80, height: 60, objectFit: "cover", borderRadius: 6, cursor: "pointer", border: i === activePhoto ? "3px solid #0d2f6e" : "3px solid transparent", opacity: i === activePhoto ? 1 : 0.7 }} />
+            <div style={S.softBand}>
+              <section style={S.section} aria-labelledby="home-how">
+                <div style={S.sectionHead}><h2 id="home-how" style={S.h2}>Comment ça marche ?</h2></div>
+                <div style={S.steps}>
+                  {[
+                    ["search", "1. Cherchez", "Choisissez la ville, votre budget et le nombre de chambres."],
+                    ["message", "2. Contactez", "Écrivez directement au propriétaire, sur WhatsApp ou par message."],
+                    ["home", "3. Visitez", "Visitez la maison et mettez-vous d'accord avec le propriétaire."],
+                  ].map(([icon, title, text]) => (
+                    <div key={title} style={S.step}>
+                      <span style={S.stepIcon}><Icon name={icon} size={24} /></span>
+                      <div>
+                        <h3 style={S.stepTitle}>{title}</h3>
+                        <p style={S.stepText}>{text}</p>
+                      </div>
+                    </div>
                   ))}
                 </div>
-              )}
+              </section>
             </div>
-          ) : (
-            <div style={{ width: "100%", height: 280, background: "linear-gradient(135deg, #c7d9f7, #e2eaf7)", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 80 }}>🏠</div>
-          )}
 
-          <div style={{ ...S.panel, marginTop: 20 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
-              <div style={{ flex: "1 1 240px", minWidth: 0 }}>
-                <h1 style={{ margin: "0 0 8px", fontSize: isMobile ? 22 : 24, fontWeight: 800, color: "#0d2f6e" }}>{detail.titre}</h1>
-                <p style={{ margin: 0, color: "#555", fontSize: 15 }}>📍 {detail.localisation}</p>
-                {avgRating > 0 && (
-                  <p style={{ margin: "6px 0 0", fontSize: 14 }}>
-                    <Stars value={avgRating} /> <span style={{ color: "#6b7280" }}>({reviews.length} avis)</span>
+            <section style={S.section} aria-labelledby="home-landlord">
+              <div style={S.landlord}>
+                <div style={{ maxWidth: 560 }}>
+                  <h2 id="home-landlord" style={{ ...S.h2, color: "#fff" }}>Vous avez une maison à louer ?</h2>
+                  <p style={{ margin: "10px 0 0", fontSize: 16, lineHeight: 1.6, color: "rgba(255, 255, 255, 0.86)" }}>
+                    Publiez votre annonce gratuitement en quelques minutes : photos, prix et numéro WhatsApp. Les locataires vous contactent directement.
                   </p>
-                )}
-              </div>
-              <div style={{ textAlign: isMobile ? "left" : "right" }}>
-                <div style={S.price}>{Number(detail.prix).toLocaleString()} <span style={{ fontSize: 13, fontWeight: 400, color: "#6b7280" }}>{detail.devise}/mois</span></div>
-                <span style={{ ...S.badge, ...(detail.disponible ? S.badgeGreen : S.badgeRed) }}>{detail.disponible ? "✅ Disponible" : "🔴 Occupée"}</span>
-              </div>
-            </div>
-            <hr style={{ margin: "20px 0", border: "none", borderTop: "1px solid #e5e7eb" }} />
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 12, marginBottom: 20 }}>
-              <InfoPill icon="🏙️" label="Ville" value={detail.ville} />
-              {detail.chambres > 0 && <InfoPill icon="🛏️" label="Chambres" value={detail.chambres} />}
-              <InfoPill icon="👤" label="Propriétaire" value={`${detail.owner_name || "Privé"}${ownerProfile?.verified ? " ✔️" : ""}`} />
-              <InfoPill icon="📅" label="Publié le" value={detail.created_at?.slice(0, 10)} />
-              {detailPhotos.length > 0 && <InfoPill icon="📷" label="Photos" value={detailPhotos.length} />}
-              <InfoPill icon="👁️" label="Vues" value={detail.views || 0} />
-            </div>
-            <h3 style={{ fontWeight: 700, color: "#374151", margin: "0 0 8px" }}>Description</h3>
-            <p style={{ color: "#555", lineHeight: 1.7, margin: "0 0 20px" }}>{detail.description}</p>
-
-            {canEdit && (
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
-                <button style={S.editBtn} onClick={() => startEdit(detail)}>✏️ Modifier</button>
-                <button style={S.dangerBtn} onClick={() => deleteListing(detail.id)}>🗑️ Supprimer</button>
-              </div>
-            )}
-
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
-              <button
-                onClick={() => toggleFavorite(detail.id)}
-                style={{ ...S.editBtn, background: favorites.has(detail.id) ? "#fee2e2" : "#e0f2fe", color: favorites.has(detail.id) ? "#991b1b" : "#0369a1" }}
-              >
-                {favorites.has(detail.id) ? "♥ Retirer des favoris" : "♡ Ajouter aux favoris"}
-              </button>
-              <button style={S.editBtn} onClick={() => shareListing(detail)}>🔗 Partager</button>
-              {currentUser && !canEdit && (
-                <button style={S.editBtn} onClick={() => startConversation(detail)}>💬 Message au propriétaire</button>
-              )}
-            </div>
-
-            <a href={`https://wa.me/${(detail.whatsapp || "264816032560").replace(/[^0-9]/g, "")}`} target="_blank" rel="noreferrer" style={S.whatsappBtn}>
-              💬 Contacter sur WhatsApp
-            </a>
-
-            <div style={{ marginTop: 24 }}>
-              <h3 style={{ fontWeight: 700, color: "#374151", margin: "0 0 8px" }}>📍 Localisation</h3>
-              <iframe
-                title="Carte"
-                src={`https://www.google.com/maps?q=${encodeURIComponent(`${detail.localisation}, ${detail.ville}, RDC`)}&output=embed`}
-                style={{ width: "100%", height: 260, border: 0, borderRadius: 12 }}
-                loading="lazy"
-              />
-            </div>
-          </div>
-
-          {/* AVIS */}
-          <div style={{ ...S.panel, marginTop: 20 }}>
-            <h3 style={{ fontWeight: 700, color: "#0d2f6e", margin: "0 0 16px", fontSize: 18 }}>⭐ Avis {reviews.length > 0 && `(${reviews.length})`}</h3>
-            {reviews.length === 0 && <p style={{ color: "#6b7280", fontSize: 14 }}>Aucun avis pour le moment.</p>}
-            {reviews.map(r => (
-              <div key={r.id} style={S.reviewCard}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-                  <strong style={{ fontSize: 14, color: "#374151" }}>{r.reviewer_name}</strong>
-                  <Stars value={r.rating} />
                 </div>
-                {r.comment && <p style={{ margin: "6px 0 0", fontSize: 14, color: "#555" }}>{r.comment}</p>}
+                <button className="hov-dim" style={{ ...S.btnPrimary, ...S.btnLg }} onClick={() => currentUser ? nav("post") : (setAuthMode("register"), nav("auth"))}>
+                  <Icon name="plus" size={20} />Publier ma maison
+                </button>
               </div>
-            ))}
-            {currentUser ? (
-              <form onSubmit={submitReview} style={{ marginTop: 16, borderTop: "1px solid #e5e7eb", paddingTop: 16 }}>
-                <label style={S.label}>Votre note</label>
-                <div style={{ display: "flex", gap: 4, marginBottom: 10 }}>
-                  {[1, 2, 3, 4, 5].map(n => (
-                    <span key={n} onClick={() => setReviewForm(f => ({ ...f, rating: n }))} style={{ cursor: "pointer", fontSize: 22, color: n <= reviewForm.rating ? "#f59e0b" : "#d1d5db" }}>★</span>
-                  ))}
-                </div>
-                <textarea style={S.textarea} placeholder="Votre commentaire (optionnel)" value={reviewForm.comment} onChange={e => setReviewForm(f => ({ ...f, comment: e.target.value }))} />
-                <button type="submit" disabled={reviewSubmitting} style={{ ...S.editBtn, marginTop: 10 }}>{reviewSubmitting ? "Envoi..." : "Publier mon avis"}</button>
-              </form>
-            ) : (
-              <p style={{ fontSize: 14, color: "#6b7280", marginTop: 12 }}>
-                <span style={{ color: "#0d2f6e", cursor: "pointer", fontWeight: 600 }} onClick={() => nav("auth")}>Connectez-vous</span> pour laisser un avis.
-              </p>
-            )}
+            </section>
           </div>
+        )}
 
-          {relatedListings.length > 0 && (
-            <div style={{ marginTop: 32 }}>
-              <h3 style={{ fontWeight: 700, color: "#0d2f6e", margin: "0 0 16px", fontSize: 18 }}>Annonces similaires à {detail.ville}</h3>
-              <div style={S.grid}>
-                {relatedListings.map(l => <ListingCard key={l.id} listing={l} onClick={() => nav("detail", l.id)} S={S} isFav={favorites.has(l.id)} onToggleFav={() => toggleFavorite(l.id)} />)}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {page === "detail" && !detail && !loading && (
-        <div style={S.section}>
-          <div style={S.emptyState}>
-            <p style={{ fontSize: 40 }}>❓</p>
-            <p>Annonce introuvable ou supprimée.</p>
-            <button style={S.btnGreen} onClick={() => nav("listings")}>Voir les annonces</button>
-          </div>
-        </div>
-      )}
-
-      {/* AUTH */}
-      {page === "auth" && (
-        <div style={S.section}>
-          <div style={S.formCard}>
-            <h2 style={{ textAlign: "center", color: "#0d2f6e", margin: "0 0 4px" }}>{authMode === "login" ? "Connexion" : "Créer un compte"}</h2>
-            <p style={{ textAlign: "center", color: "#6b7280", fontSize: 14, margin: "0 0 28px" }}>{authMode === "login" ? "Accédez à votre espace" : "Publiez vos annonces gratuitement"}</p>
-            <form onSubmit={handleAuth}>
-              {authMode === "register" && (
-                <div style={S.formGroup}>
-                  <label style={S.label}>Nom complet *</label>
-                  <input style={S.input} placeholder="Jean Dupont" value={form.nom || ""} onChange={e => setForm(f => ({ ...f, nom: e.target.value }))} required />
+        {/* LISTINGS */}
+        {page === "listings" && (
+          <div style={S.pageWhite}>
+            <div style={S.wrap}>
+              <div style={S.pageHead}>
+                <div>
+                  <h1 style={S.h1}>Annonces</h1>
+                  <p style={S.sub}>Maisons et appartements à louer au Katanga</p>
                 </div>
-              )}
-              <div style={S.formGroup}>
-                <label style={S.label}>Email *</label>
-                <input style={S.input} type="email" placeholder="votre@email.com" value={form.email || ""} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} required />
               </div>
-              <div style={S.formGroup}>
-                <label style={S.label}>Mot de passe *</label>
-                <input style={S.input} type="password" placeholder="••••••••" value={form.password || ""} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} required />
-              </div>
-              {authMode === "register" && (
-                <div style={S.formGroup}>
-                  <label style={S.label}>Numéro WhatsApp *</label>
-                  <input style={S.input} placeholder="+243 XXX XXX XXX" value={form.whatsapp || ""} onChange={e => setForm(f => ({ ...f, whatsapp: e.target.value }))} required />
-                </div>
-              )}
-              <button type="submit" style={{ ...S.submitBtn, opacity: submitting ? 0.7 : 1 }} disabled={submitting}>
-                {submitting ? "En cours..." : authMode === "login" ? "Se connecter" : "Créer mon compte"}
-              </button>
-            </form>
-            <p style={{ textAlign: "center", fontSize: 14, marginTop: 20, color: "#6b7280" }}>
-              {authMode === "login" ? "Pas encore de compte ? " : "Déjà un compte ? "}
-              <span style={{ color: "#0d2f6e", cursor: "pointer", fontWeight: 600 }} onClick={() => setAuthMode(authMode === "login" ? "register" : "login")}>
-                {authMode === "login" ? "S'inscrire" : "Se connecter"}
-              </span>
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* POST */}
-      {page === "post" && (
-        <div style={S.section}>
-          {!currentUser ? (
-            <div style={S.emptyState}>
-              <p style={{ fontSize: 40 }}>🔒</p>
-              <p>Vous devez être connecté pour publier.</p>
-              <button style={S.btnGreen} onClick={() => nav("auth")}>Se connecter</button>
-            </div>
-          ) : (
-            <div style={{ maxWidth: 620, margin: "0 auto" }}>
-              <h2 style={{ ...S.sectionTitle, marginBottom: 24 }}>{editId ? "✏️ Modifier l'annonce" : "📢 Publier une annonce"}</h2>
-              <div style={S.panel}>
-                <form onSubmit={handlePost}>
-                  <div style={S.formGroup}>
-                    <label style={S.label}>Titre *</label>
-                    <input style={S.input} placeholder="Ex: Maison 3 chambres – Gécamines" value={postForm.titre} onChange={e => setPostForm(f => ({ ...f, titre: e.target.value }))} required />
+              <div style={S.filterPanel} data-testid="filters">
+                <div style={S.filterTop}>
+                  <div style={S.searchWrap}>
+                    <span style={S.searchIcon}><Icon name="search" size={20} /></span>
+                    <input
+                      className="field"
+                      style={{ ...S.field, paddingLeft: 44 }}
+                      type="search"
+                      aria-label="Rechercher"
+                      placeholder="Rechercher (titre, lieu...)"
+                      value={search}
+                      onChange={e => setSearch(e.target.value)}
+                    />
                   </div>
-                  <div style={{ ...S.row, marginBottom: 16 }}>
-                    <div style={{ flex: 2 }}>
-                      <label style={S.label}>Prix *</label>
-                      <input style={S.input} type="number" placeholder="800" value={postForm.prix} onChange={e => setPostForm(f => ({ ...f, prix: e.target.value }))} required />
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <label style={S.label}>Devise</label>
-                      <select style={{ ...S.select, width: "100%" }} value={postForm.devise} onChange={e => setPostForm(f => ({ ...f, devise: e.target.value }))}>
-                        <option>USD</option><option>CDF</option><option>ZAR</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div style={{ ...S.row, marginBottom: 16 }}>
-                    <div style={{ flex: 1 }}>
-                      <label style={S.label}>Ville *</label>
-                      <select style={{ ...S.select, width: "100%" }} value={postForm.ville} onChange={e => setPostForm(f => ({ ...f, ville: e.target.value }))}>
+                  {isMobile && (
+                    <button className="hov-soft" style={S.filterToggle} aria-expanded={filtersOpen} aria-controls="filters-panel" onClick={() => setFiltersOpen(o => !o)}>
+                      Filtres{filtersActiveCount ? ` (${filtersActiveCount})` : ""}
+                    </button>
+                  )}
+                </div>
+                {(!isMobile || filtersOpen) && (
+                  <div id="filters-panel" style={S.filterGrid}>
+                    <div>
+                      <label htmlFor="f-ville" style={S.filterLabel}>Ville</label>
+                      <select id="f-ville" className="field" style={S.field} value={filterVille} onChange={e => setFilterVille(e.target.value)}>
+                        <option value="Toutes">Toutes</option>
                         {VILLES.map(v => <option key={v}>{v}</option>)}
                       </select>
                     </div>
-                    <div style={{ flex: 1 }}>
-                      <label style={S.label}>Chambres</label>
-                      <input style={S.input} type="number" placeholder="3" min="0" value={postForm.chambres} onChange={e => setPostForm(f => ({ ...f, chambres: e.target.value }))} />
+                    <div>
+                      <label htmlFor="f-chambres" style={S.filterLabel}>Chambres</label>
+                      <select id="f-chambres" className="field" style={S.field} value={filterChambres} onChange={e => setFilterChambres(e.target.value)}>
+                        {CHAMBRES_OPTIONS.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label htmlFor="f-statut" style={S.filterLabel}>Statut</label>
+                      <select id="f-statut" className="field" style={S.field} value={filterDispo} onChange={e => setFilterDispo(e.target.value)}>
+                        <option value="Toutes">Tout statut</option>
+                        <option value="Disponible">Disponible</option>
+                        <option value="Occupée">Occupée</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label htmlFor="f-tri" style={S.filterLabel}>Trier par</label>
+                      <select id="f-tri" className="field" style={S.field} value={sortBy} onChange={e => setSortBy(e.target.value)}>
+                        <option value="recent">Plus récentes</option>
+                        <option value="price_asc">Prix croissant</option>
+                        <option value="price_desc">Prix décroissant</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label htmlFor="f-prix-min" style={S.filterLabel}>Prix min<span className="sr-only"> en {filterCurrency}</span></label>
+                      <div style={{ position: "relative" }}>
+                        <input id="f-prix-min" className="field" style={{ ...S.field, paddingRight: 44 }} type="number" inputMode="numeric" min="0" placeholder="Min" value={priceMin} onChange={e => setPriceMin(e.target.value)} />
+                        <span style={S.fieldSymbol} data-testid="field-currency" aria-hidden="true">{currencySymbol(filterCurrency)}</span>
+                      </div>
+                    </div>
+                    <div>
+                      <label htmlFor="f-prix-max" style={S.filterLabel}>Prix max<span className="sr-only"> en {filterCurrency}</span></label>
+                      <div style={{ position: "relative" }}>
+                        <input id="f-prix-max" className="field" style={{ ...S.field, paddingRight: 44 }} type="number" inputMode="numeric" min="0" placeholder="Max" value={priceMax} onChange={e => setPriceMax(e.target.value)} />
+                        <span style={S.fieldSymbol} data-testid="field-currency" aria-hidden="true">{currencySymbol(filterCurrency)}</span>
+                      </div>
                     </div>
                   </div>
-                  <div style={S.formGroup}>
-                    <label style={S.label}>Localisation précise *</label>
-                    <input style={S.input} placeholder="Ex: Quartier Gécamines, rue 12" value={postForm.localisation} onChange={e => setPostForm(f => ({ ...f, localisation: e.target.value }))} required />
-                  </div>
-                  <div style={S.formGroup}>
-                    <label style={S.label}>Description *</label>
-                    <textarea style={S.textarea} placeholder="Décrivez la maison..." value={postForm.description} onChange={e => setPostForm(f => ({ ...f, description: e.target.value }))} required />
-                  </div>
-                  <div style={S.formGroup}>
-                    <label style={S.label}>WhatsApp de contact</label>
-                    <input style={S.input} placeholder={(!editingOthersListing && profile?.whatsapp) || "+243 XXX XXX XXX"} value={postForm.whatsapp} onChange={e => setPostForm(f => ({ ...f, whatsapp: e.target.value }))} />
+                )}
+              </div>
+              <div style={S.resultsBar}>
+                <p style={{ margin: 0, fontSize: 15, fontWeight: 600, color: C.ink }} data-testid="results-count">{sorted.length} annonce{sorted.length !== 1 ? "s" : ""}</p>
+                {filtersActive && sorted.length > 0 && <button style={S.linkBtn} onClick={clearFilters}>Effacer les filtres</button>}
+              </div>
+              {loading ? (
+                <div style={S.grid}>{Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} S={S} />)}</div>
+              ) : sorted.length === 0 ? (
+                <EmptyState icon="search" text="Aucune annonce ne correspond à vos critères.">
+                  {filtersActive && <button className="hov-soft" style={S.btnSecondary} onClick={clearFilters}>Effacer les filtres</button>}
+                </EmptyState>
+              ) : (
+                <>
+                  <div style={S.grid}>{visible.map(l => <ListingCard key={l.id} {...cardProps(l)} />)}</div>
+                  {visibleCount < sorted.length && (
+                    <div style={{ textAlign: "center", marginTop: 36 }}>
+                      <button className="hov-soft" style={{ ...S.btnSecondary, ...S.btnLg }} onClick={() => setVisibleCount(c => c + PAGE_SIZE)}>Charger plus ({sorted.length - visibleCount} restantes)</button>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* DETAIL */}
+        {page === "detail" && detail && (
+          <div style={S.pageWhite}>
+            <div style={S.wrapDetail}>
+              <button className="hov-soft" style={S.backBtn} onClick={() => nav("listings")}><Icon name="arrowLeft" size={18} />Retour aux annonces</button>
+
+              <Gallery key={detail.id} photos={detailPhotos} title={detail.titre} active={activePhoto} onChange={setActivePhoto} isMobile={isMobile} S={S} />
+
+              <div style={S.detailLayout}>
+                <div style={{ minWidth: 0 }}>
+                  <h1 style={S.detailTitle}>{detail.titre}</h1>
+                  <p style={S.detailLoc} data-testid="detail-location">
+                    <Icon name="pin" size={19} style={{ marginTop: 2 }} />
+                    <span>{detail.localisation}{detail.ville ? ` · ${detail.ville}` : ""}</span>
+                  </p>
+                  {avgRating > 0 && (
+                    <p style={S.detailRating}>
+                      <Icon name="star" size={17} fill={C.amber} style={{ color: C.amber }} />
+                      <strong>{avgRating.toFixed(1).replace(".", ",")}</strong>
+                      <span style={{ color: C.muted }}>· {reviews.length} avis</span>
+                    </p>
+                  )}
+                  {isMobile && (
+                    <div style={S.priceRow}>
+                      {bigPriceBlock(detail)}
+                      {statusBadge(detail.disponible)}
+                    </div>
+                  )}
+                  <div style={S.actionRow}>
+                    <button
+                      className="hov-soft"
+                      data-testid="detail-fav"
+                      aria-pressed={favorites.has(detail.id)}
+                      onClick={() => toggleFavorite(detail.id)}
+                      style={{ ...S.btnSecondary, ...S.btnSm, ...(favorites.has(detail.id) ? { color: "#be123c", border: "1px solid #fecdd3" } : {}) }}
+                    >
+                      <Icon name="heart" size={18} fill={favorites.has(detail.id) ? "#e11d48" : "none"} />
+                      {favorites.has(detail.id) ? "Retirer des favoris" : "Ajouter aux favoris"}
+                    </button>
+                    <button className="hov-soft" style={{ ...S.btnSecondary, ...S.btnSm }} onClick={() => shareListing(detail)}><Icon name="share" size={18} />Partager</button>
                   </div>
 
-                  <div style={S.formGroup}>
-                    <label style={S.label}>Photos de la maison (max {MAX_PHOTOS})</label>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      multiple
-                      onChange={handleImagesChange}
-                      disabled={preparingPhotos || submitting || images.length >= MAX_PHOTOS}
-                      style={{ fontSize: 14, maxWidth: "100%" }}
+                  {isNarrow && !isMobile && <div style={{ marginTop: 24 }} aria-label="Contacter le propriétaire" role="region">{contactCard}</div>}
+
+                  {canEdit && (
+                    <div style={S.ownerTools} data-testid="owner-tools">
+                      <p style={{ margin: 0, fontSize: 15, fontWeight: 600, color: C.ink }}>Vous gérez cette annonce</p>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button className="hov-soft" style={{ ...S.btnSecondary, ...S.btnSm }} onClick={() => startEdit(detail)}><Icon name="edit" size={17} />Modifier</button>
+                        <button className="hov-soft" style={{ ...S.btnDanger, ...S.btnSm }} onClick={() => deleteListing(detail.id)}><Icon name="trash" size={17} />Supprimer</button>
+                      </div>
+                    </div>
+                  )}
+
+                  <hr style={S.divider} />
+
+                  <div style={S.infoGrid}>
+                    <InfoItem S={S} icon="city" label="Ville" value={detail.ville} />
+                    {detail.chambres > 0 && <InfoItem S={S} icon="bed" label="Chambres" value={detail.chambres} />}
+                    <InfoItem S={S} icon="calendar" label="Publié le" value={formatDate(detail.created_at)} />
+                    {detailPhotos.length > 0 && <InfoItem S={S} icon="camera" label="Photos" value={detailPhotos.length} />}
+                    <InfoItem S={S} icon="eye" label="Vues" value={detail.views || 0} />
+                  </div>
+
+                  <section style={S.detailSection}>
+                    <h2 style={S.h3}>Description</h2>
+                    <p style={S.description}>{detail.description}</p>
+                  </section>
+
+                  {isMobile && (
+                    <section style={S.detailSection}>
+                      <h2 style={S.h3}>Propriétaire</h2>
+                      {ownerCard}
+                    </section>
+                  )}
+
+                  <section style={S.detailSection}>
+                    <h2 style={S.h3}>Localisation</h2>
+                    <iframe
+                      title="Carte"
+                      src={`https://www.google.com/maps?q=${encodeURIComponent(`${detail.localisation}, ${detail.ville}, RDC`)}&output=embed`}
+                      style={S.mapFrame}
+                      loading="lazy"
                     />
-                    {preparingPhotos && <p style={{ fontSize: 13, color: "#0369a1", margin: "8px 0 0", fontWeight: 600 }}>⏳ Préparation des photos…</p>}
+                  </section>
+
+                  {/* AVIS */}
+                  <section style={S.detailSection} data-testid="reviews">
+                    <h2 style={{ ...S.h3, display: "flex", alignItems: "center", gap: 8 }}>
+                      Avis
+                      {reviews.length > 0 && <span style={{ fontSize: 16, fontWeight: 600, color: C.muted }}>({reviews.length})</span>}
+                    </h2>
+                    {reviews.length === 0 && <p style={{ margin: "0 0 8px", color: C.muted, fontSize: 15 }}>Aucun avis pour le moment.</p>}
+                    {reviews.map(r => (
+                      <div key={r.id} style={S.reviewItem}>
+                        <div style={{ ...S.avatar, width: 40, height: 40, fontSize: 16 }} aria-hidden="true">{initial(r.reviewer_name)}</div>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                            <strong style={{ fontSize: 15, color: C.ink }}>{r.reviewer_name}</strong>
+                            <Stars value={r.rating} />
+                          </div>
+                          {r.comment && <p style={{ margin: "4px 0 0", fontSize: 15, color: C.ink, lineHeight: 1.55 }}>{r.comment}</p>}
+                        </div>
+                      </div>
+                    ))}
+                    {currentUser ? (
+                      <form onSubmit={submitReview} style={{ ...S.panel, padding: isMobile ? 16 : 20, marginTop: 12, background: C.soft }}>
+                        <p style={{ ...S.label, marginBottom: 2 }}>Votre note</p>
+                        <div role="group" aria-label="Votre note" style={{ display: "flex", gap: 2, marginBottom: 10, marginLeft: -8 }}>
+                          {[1, 2, 3, 4, 5].map(n => (
+                            <button
+                              key={n}
+                              type="button"
+                              aria-label={`${n} étoile${n > 1 ? "s" : ""}`}
+                              aria-pressed={reviewForm.rating === n}
+                              onClick={() => setReviewForm(f => ({ ...f, rating: n }))}
+                              style={{ ...S.starBtn, color: n <= reviewForm.rating ? C.amber : "#c5cbd6" }}
+                            >
+                              <Icon name="star" size={28} fill={n <= reviewForm.rating ? C.amber : "none"} strokeWidth={1.6} />
+                            </button>
+                          ))}
+                        </div>
+                        <label htmlFor="review-comment" className="sr-only">Votre commentaire</label>
+                        <textarea id="review-comment" className="field" style={{ ...S.textarea, minHeight: 96 }} placeholder="Votre commentaire (optionnel)" value={reviewForm.comment} onChange={e => setReviewForm(f => ({ ...f, comment: e.target.value }))} />
+                        <button type="submit" className="hov-dim" disabled={reviewSubmitting} style={{ ...S.btnNavy, marginTop: 12, opacity: reviewSubmitting ? 0.7 : 1 }}>{reviewSubmitting ? "Envoi..." : "Publier mon avis"}</button>
+                      </form>
+                    ) : (
+                      <p style={{ fontSize: 15, color: C.muted, margin: "12px 0 0" }}>
+                        <button style={S.linkBtn} onClick={() => nav("auth")}>Connectez-vous</button> pour laisser un avis.
+                      </p>
+                    )}
+                  </section>
+                </div>
+
+                {!isNarrow && (
+                  <aside style={S.aside} aria-label="Contacter le propriétaire">
+                    {contactCard}
+                  </aside>
+                )}
+              </div>
+
+              {relatedListings.length > 0 && (
+                <section style={{ marginTop: isMobile ? 40 : 64 }}>
+                  <h2 style={{ ...S.h2, marginBottom: isMobile ? 18 : 24 }}>Annonces similaires à {detail.ville}</h2>
+                  <div style={S.grid}>{relatedListings.map(l => <ListingCard key={l.id} {...cardProps(l)} />)}</div>
+                </section>
+              )}
+            </div>
+
+            {showContactBar && (
+              <div style={S.contactBar} data-testid="contact-bar">
+                {!showMessageBtn && (
+                  <div style={{ flex: "1 1 0", minWidth: 0 }}>
+                    <p style={{ ...S.bigPrice, fontSize: 20 }} data-testid="bar-price"><span key={priceInfo(detail).devise} className="price-fade">{priceInfo(detail).text}<span style={{ ...S.priceUnit, fontSize: 13 }}>/mois</span></span></p>
+                    <p style={{ margin: "2px 0 0", fontSize: 13, fontWeight: 600, color: detail.disponible ? "#166534" : "#991b1b" }}>{detail.disponible ? "Disponible" : "Occupée"}</p>
+                  </div>
+                )}
+                <a href={whatsappHref} target="_blank" rel="noreferrer" aria-label="Contacter sur WhatsApp" className="hov-dim" style={{ ...S.btnPrimary, minHeight: 48, flex: "1 1 0", minWidth: 0, borderRadius: 14 }}>
+                  <Icon name="whatsapp" size={22} />WhatsApp
+                </a>
+                {showMessageBtn && (
+                  <button aria-label="Message au propriétaire" className="hov-soft" style={{ ...S.btnSecondary, minHeight: 48, flex: "1 1 0", minWidth: 0, borderRadius: 14 }} onClick={() => startConversation(detail)}>
+                    <Icon name="message" size={20} />Message
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {page === "detail" && !detail && !loading && (
+          <div style={S.pageWhite}>
+            <div style={S.wrap}>
+              <EmptyState icon="search" text="Annonce introuvable ou supprimée.">
+                <button className="hov-dim" style={S.btnPrimary} onClick={() => nav("listings")}>Voir les annonces</button>
+              </EmptyState>
+            </div>
+          </div>
+        )}
+
+        {/* AUTH */}
+        {page === "auth" && (
+          <div style={S.pageGrey}>
+            <div style={S.wrap}>
+              <div style={S.authCard}>
+                <h1 style={{ ...S.h1, textAlign: "center" }}>{authMode === "login" ? "Connexion" : "Créer un compte"}</h1>
+                <p style={{ ...S.sub, textAlign: "center", margin: "8px 0 28px" }}>{authMode === "login" ? "Accédez à votre espace" : "Publiez vos annonces gratuitement"}</p>
+                {authError && (
+                  <div role="alert" style={S.formError}>
+                    <Icon name="alert" size={20} style={{ marginTop: 1 }} />
+                    <span>{authError}</span>
+                  </div>
+                )}
+                <form onSubmit={handleAuth}>
+                  {authMode === "register" && (
+                    <div style={S.formGroup}>
+                      <label htmlFor="auth-nom" style={S.label}>Nom complet *</label>
+                      <input id="auth-nom" className="field" style={S.field} autoComplete="name" placeholder="Jean Dupont" value={form.nom || ""} onChange={e => setForm(f => ({ ...f, nom: e.target.value }))} required />
+                    </div>
+                  )}
+                  <div style={S.formGroup}>
+                    <label htmlFor="auth-email" style={S.label}>Email *</label>
+                    <input id="auth-email" className="field" style={S.field} type="email" autoComplete="email" inputMode="email" placeholder="votre@email.com" value={form.email || ""} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} required />
+                  </div>
+                  <div style={S.formGroup}>
+                    <label htmlFor="auth-password" style={S.label}>Mot de passe *</label>
+                    <input id="auth-password" className="field" style={S.field} type="password" autoComplete={authMode === "login" ? "current-password" : "new-password"} placeholder="••••••••" value={form.password || ""} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} required />
+                  </div>
+                  {authMode === "register" && (
+                    <div style={S.formGroup}>
+                      <label htmlFor="auth-whatsapp" style={S.label}>Numéro WhatsApp *</label>
+                      <input id="auth-whatsapp" className="field" style={S.field} type="tel" autoComplete="tel" placeholder="+243 XXX XXX XXX" value={form.whatsapp || ""} onChange={e => setForm(f => ({ ...f, whatsapp: e.target.value }))} required />
+                    </div>
+                  )}
+                  <button type="submit" className="hov-dim" style={{ ...S.btnPrimary, ...S.btnLg, ...S.block, marginTop: 6, opacity: submitting ? 0.7 : 1 }} disabled={submitting}>
+                    {submitting ? "En cours..." : authMode === "login" ? "Se connecter" : "Créer mon compte"}
+                  </button>
+                </form>
+                <p style={{ textAlign: "center", fontSize: 15, margin: "22px 0 0", color: C.muted }}>
+                  {authMode === "login" ? "Pas encore de compte ? " : "Déjà un compte ? "}
+                  <button style={S.linkBtn} onClick={() => { setAuthMode(authMode === "login" ? "register" : "login"); setAuthError(""); }}>
+                    {authMode === "login" ? "S'inscrire" : "Se connecter"}
+                  </button>
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* POST */}
+        {page === "post" && (
+          <div style={S.pageGrey}>
+            {!currentUser ? (
+              <div style={S.wrap}>
+                <EmptyState icon="user" text="Vous devez être connecté pour publier.">
+                  <button className="hov-dim" style={S.btnPrimary} onClick={() => nav("auth")}>Se connecter</button>
+                </EmptyState>
+              </div>
+            ) : (
+              <div style={S.wrapForm}>
+                <div style={S.pageHead}>
+                  <div>
+                    <h1 style={S.h1}>{editId ? "Modifier l'annonce" : "Publier une annonce"}</h1>
+                    <p style={S.sub}>{editId ? "Modifiez ce qui doit changer, puis enregistrez." : "C'est gratuit. Les champs avec * sont obligatoires."}</p>
+                  </div>
+                </div>
+                <form onSubmit={handlePost}>
+                  <section style={S.formSection}>
+                    <h2 style={S.formSectionTitle}>Le logement</h2>
+                    <div style={S.formGroup}>
+                      <label htmlFor="post-titre" style={S.label}>Titre *</label>
+                      <input id="post-titre" className="field" style={S.field} placeholder="Ex: Maison 3 chambres – Gécamines" value={postForm.titre} onChange={e => setPostForm(f => ({ ...f, titre: e.target.value }))} required />
+                    </div>
+                    <div style={S.formRow2}>
+                      <div>
+                        <label htmlFor="post-prix" style={S.label}>Prix par mois *</label>
+                        <input id="post-prix" className="field" style={S.field} type="number" inputMode="decimal" min="0" placeholder="800" value={postForm.prix} onChange={e => setPostForm(f => ({ ...f, prix: e.target.value }))} required />
+                      </div>
+                      <div>
+                        <label htmlFor="post-devise" style={S.label}>Devise</label>
+                        <select id="post-devise" className="field" style={S.field} value={postForm.devise} onChange={e => setPostForm(f => ({ ...f, devise: e.target.value }))}>
+                          <option>USD</option><option>CDF</option><option>ZAR</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div style={S.formRowEven}>
+                      <div>
+                        <label htmlFor="post-ville" style={S.label}>Ville *</label>
+                        <select id="post-ville" className="field" style={S.field} value={postForm.ville} onChange={e => setPostForm(f => ({ ...f, ville: e.target.value }))}>
+                          {VILLES.map(v => <option key={v}>{v}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label htmlFor="post-chambres" style={S.label}>Chambres</label>
+                        <input id="post-chambres" className="field" style={S.field} type="number" inputMode="numeric" placeholder="3" min="0" value={postForm.chambres} onChange={e => setPostForm(f => ({ ...f, chambres: e.target.value }))} />
+                      </div>
+                    </div>
+                    <div style={S.formGroup}>
+                      <label htmlFor="post-localisation" style={S.label}>Localisation précise *</label>
+                      <input id="post-localisation" className="field" style={S.field} placeholder="Ex: Quartier Gécamines, rue 12" value={postForm.localisation} onChange={e => setPostForm(f => ({ ...f, localisation: e.target.value }))} required />
+                    </div>
+                    <div>
+                      <label htmlFor="post-description" style={S.label}>Description *</label>
+                      <textarea id="post-description" className="field" style={S.textarea} placeholder="Décrivez la maison..." value={postForm.description} onChange={e => setPostForm(f => ({ ...f, description: e.target.value }))} required />
+                    </div>
+                  </section>
+
+                  <section style={S.formSection}>
+                    <h2 style={S.formSectionTitle}>Photos de la maison (max {MAX_PHOTOS})</h2>
+                    <label
+                      className="dropzone hov-soft"
+                      style={{ ...S.dropzone, ...(preparingPhotos || submitting || images.length >= MAX_PHOTOS ? { opacity: 0.55, cursor: "not-allowed" } : {}) }}
+                    >
+                      <Icon name="upload" size={26} />
+                      <span style={{ fontSize: 16, fontWeight: 700 }}>{images.length >= MAX_PHOTOS ? `${MAX_PHOTOS} photos ajoutées` : "Ajouter des photos"}</span>
+                      <span style={{ fontSize: 13, color: C.muted }}>Galerie ou appareil photo · {images.length}/{MAX_PHOTOS}</span>
+                      <input
+                        className="sr-only"
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        onChange={handleImagesChange}
+                        disabled={preparingPhotos || submitting || images.length >= MAX_PHOTOS}
+                      />
+                    </label>
+                    {preparingPhotos && <p style={S.progress} role="status"><Icon name="camera" size={18} />Préparation des photos…</p>}
                     {images.length > 0 && (
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                      <div style={S.photoGrid}>
                         {images.map((img, i) => (
-                          <div key={i} style={{ position: "relative" }}>
-                            <img src={img.src} alt="" style={{ width: 90, height: 70, objectFit: "cover", borderRadius: 6, display: "block" }} />
-                            {i === 0 && <span style={{ position: "absolute", top: 2, left: 2, background: "#0d2f6e", color: "#fff", fontSize: 10, padding: "1px 5px", borderRadius: 4 }}>principale</span>}
-                            <button type="button" onClick={() => removeImage(i)} disabled={submitting} aria-label="Retirer cette photo"
-                              style={{ position: "absolute", top: 2, right: 2, background: "#ef4444", color: "#fff", border: "none", borderRadius: "50%", width: 18, height: 18, fontSize: 11, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+                          <div key={i} style={S.photoThumb}>
+                            <img src={img.src} alt={`Photo ${i + 1}`} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                            {i === 0 && <span style={S.photoMainBadge}>Photo principale</span>}
+                            <button type="button" className="hov-dim" onClick={() => removeImage(i)} disabled={submitting} aria-label="Retirer cette photo" style={S.photoRemove}>
+                              <Icon name="close" size={18} strokeWidth={2.5} />
+                            </button>
                           </div>
                         ))}
                       </div>
                     )}
-                    <p style={{ fontSize: 12, color: "#6b7280", margin: "6px 0 0" }}>La première photo sera la photo principale. Les photos sont réduites automatiquement pour charger vite (JPG, PNG ou WebP).</p>
-                  </div>
+                    <p style={S.hint}>La première photo sera la photo principale. Les photos sont réduites automatiquement pour charger vite (JPG, PNG ou WebP).</p>
+                  </section>
 
-                  <div style={S.formGroup}>
-                    <label style={S.label}>Statut</label>
-                    <select style={{ ...S.select, width: "100%" }} value={postForm.disponible} onChange={e => setPostForm(f => ({ ...f, disponible: e.target.value }))}>
-                      <option value="true">✅ Disponible</option>
-                      <option value="false">🔴 Occupée</option>
-                    </select>
-                  </div>
-                  <button type="submit" style={{ ...S.submitBtn, opacity: submitting || preparingPhotos ? 0.7 : 1 }} disabled={submitting || preparingPhotos}>
+                  <section style={S.formSection}>
+                    <h2 style={S.formSectionTitle}>Contact et disponibilité</h2>
+                    <div style={S.formGroup}>
+                      <label htmlFor="post-whatsapp" style={S.label}>WhatsApp de contact</label>
+                      <input id="post-whatsapp" className="field" style={S.field} type="tel" placeholder={(!editingOthersListing && profile?.whatsapp) || "+243 XXX XXX XXX"} value={postForm.whatsapp} onChange={e => setPostForm(f => ({ ...f, whatsapp: e.target.value }))} />
+                    </div>
+                    <div>
+                      <label htmlFor="post-statut" style={S.label}>Statut</label>
+                      <select id="post-statut" className="field" style={S.field} value={postForm.disponible} onChange={e => setPostForm(f => ({ ...f, disponible: e.target.value }))}>
+                        <option value="true">Disponible</option>
+                        <option value="false">Occupée</option>
+                      </select>
+                    </div>
+                  </section>
+
+                  <button type="submit" className="hov-dim" style={{ ...S.btnPrimary, ...S.btnLg, ...S.block, opacity: submitting || preparingPhotos ? 0.7 : 1 }} disabled={submitting || preparingPhotos}>
                     {submitting ? (uploadStatus || "En cours...") : preparingPhotos ? "Préparation des photos…" : editId ? "Enregistrer" : "Publier l'annonce"}
                   </button>
-                  {editId && <button type="button" style={{ ...S.backBtn, width: "100%", marginTop: 10, textAlign: "center" }} onClick={() => { setEditId(null); nav("my-listings"); }}>Annuler</button>}
+                  {editId && <button type="button" className="hov-soft" style={{ ...S.btnSecondary, ...S.btnLg, ...S.block, marginTop: 10 }} onClick={() => { setEditId(null); nav("my-listings"); }}>Annuler</button>}
                 </form>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* MY LISTINGS */}
-      {page === "my-listings" && (
-        <div style={S.section}>
-          <h2 style={S.sectionTitle}>Mes annonces</h2>
-          {!currentUser
-            ? <div style={S.emptyState}><p style={{ fontSize: 40 }}>🔒</p><p>Connectez-vous pour voir vos annonces.</p><button style={S.btnGreen} onClick={() => nav("auth")}>Se connecter</button></div>
-            : myListings.length === 0
-            ? <div style={S.emptyState}><p style={{ fontSize: 40 }}>📋</p><p>Vous n'avez pas encore d'annonces.</p><button style={S.btnGreen} onClick={() => nav("post")}>Publier ma première annonce</button></div>
-            : <div style={S.grid}>{myListings.map(l => (
-              <div key={l.id} style={{ ...S.card, cursor: "default" }}>
-                <ListingCard listing={l} onClick={() => nav("detail", l.id)} S={S} isFav={favorites.has(l.id)} onToggleFav={() => toggleFavorite(l.id)} />
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", padding: "12px 16px 16px" }}>
-                  <button style={S.editBtn} onClick={() => startEdit(l)}>✏️ Modifier</button>
-                  <button style={S.dangerBtn} onClick={() => deleteListing(l.id)}>🗑️ Supprimer</button>
-                </div>
-              </div>
-            ))}</div>
-          }
-        </div>
-      )}
-
-      {/* FAVORITES */}
-      {page === "favorites" && (
-        <div style={S.section}>
-          <h2 style={S.sectionTitle}>♥ Mes favoris</h2>
-          {!currentUser ? (
-            <div style={S.emptyState}><p style={{ fontSize: 40 }}>🔒</p><p>Connectez-vous pour voir vos favoris.</p><button style={S.btnGreen} onClick={() => nav("auth")}>Se connecter</button></div>
-          ) : favoriteListings.length === 0 ? (
-            <div style={S.emptyState}><p style={{ fontSize: 40 }}>♡</p><p>Aucun favori pour le moment.</p><button style={S.btnGreen} onClick={() => nav("listings")}>Parcourir les annonces</button></div>
-          ) : (
-            <div style={S.grid}>{favoriteListings.map(l => <ListingCard key={l.id} listing={l} onClick={() => nav("detail", l.id)} S={S} isFav={true} onToggleFav={() => toggleFavorite(l.id)} />)}</div>
-          )}
-        </div>
-      )}
-
-      {/* MESSAGES */}
-      {page === "messages" && (
-        <div style={S.section}>
-          <h2 style={S.sectionTitle}>💬 Messages</h2>
-          {!currentUser ? (
-            <div style={S.emptyState}><p style={{ fontSize: 40 }}>🔒</p><p>Connectez-vous pour voir vos messages.</p><button style={S.btnGreen} onClick={() => nav("auth")}>Se connecter</button></div>
-          ) : conversations.length === 0 ? (
-            <div style={S.emptyState}><p style={{ fontSize: 40 }}>💬</p><p>Aucune conversation pour le moment.</p></div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {conversations.map(c => {
-                const otherName = c.buyer_id === currentUser.id ? c.owner_name : c.buyer_name;
-                return (
-                  <div key={c.id} onClick={() => nav("chat", c.id)} style={S.convRow}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <strong style={{ color: "#0d2f6e" }}>{otherName}</strong>
-                      <p style={{ margin: "4px 0 0", fontSize: 13, color: "#6b7280" }}>À propos de : {c.listing_title}</p>
-                    </div>
-                    <span style={{ fontSize: 20, flexShrink: 0 }}>›</span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* CHAT */}
-      {page === "chat" && (
-        <div style={S.section}>
-          <button style={S.backBtn} onClick={() => nav("messages")}>← Retour aux messages</button>
-          {!currentUser ? (
-            <div style={S.emptyState}><p>Connectez-vous pour accéder à vos messages.</p></div>
-          ) : (
-            <div style={S.chatBox}>
-              <div style={S.chatMessages}>
-                {messages.length === 0 && <p style={{ textAlign: "center", color: "#9ca3af", fontSize: 14 }}>Aucun message. Dites bonjour 👋</p>}
-                {messages.map(m => (
-                  <div key={m.id} style={{ ...S.chatBubble, ...(m.sender_id === currentUser.id ? S.chatBubbleMine : S.chatBubbleTheirs) }}>
-                    {m.content}
-                  </div>
-                ))}
-              </div>
-              <form onSubmit={sendMessage} style={{ display: "flex", gap: 8, marginTop: 12 }}>
-                <input style={{ ...S.input, flex: 1, minWidth: 0 }} placeholder="Écrire un message..." value={messageInput} onChange={e => setMessageInput(e.target.value)} />
-                <button type="submit" style={{ ...S.btnGreen, padding: "10px 18px", flexShrink: 0 }}>Envoyer</button>
-              </form>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ADMIN */}
-      {page === "admin" && (
-        !isAdmin ? (
-          <div style={S.section}><div style={S.emptyState}><p style={{ fontSize: 40 }}>🔒</p><p>Accès réservé aux administrateurs.</p></div></div>
-        ) : (
-          <div style={S.section}>
-            <h2 style={S.sectionTitle}>⚙️ Panneau d'administration</h2>
-            <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
-              <button style={adminTab === "listings" ? S.adminTabActive : S.adminTabBtn} onClick={() => setAdminTab("listings")}>Annonces ({listings.length})</button>
-              <button style={adminTab === "users" ? S.adminTabActive : S.adminTabBtn} onClick={() => setAdminTab("users")}>Utilisateurs ({adminUsers.length})</button>
-              <button style={adminTab === "reviews" ? S.adminTabActive : S.adminTabBtn} onClick={() => setAdminTab("reviews")}>Avis ({adminReviews.length})</button>
-            </div>
-
-            {adminTab === "listings" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {listings.map(l => (
-                  <div key={l.id} style={S.adminRow}>
-                    <div style={S.adminRowText}>
-                      <strong style={{ color: "#0d2f6e" }}>{l.titre}</strong>
-                      <p style={{ margin: "2px 0 0", fontSize: 13, color: "#6b7280" }}>{l.ville} · {l.owner_name} · {l.views || 0} vues</p>
-                    </div>
-                    <div style={S.adminRowActions}>
-                      <button style={S.editBtn} onClick={() => nav("detail", l.id)}>Voir</button>
-                      <button style={S.dangerBtn} onClick={() => deleteListing(l.id)}>Supprimer</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {adminTab === "users" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {adminUsers.map(u => (
-                  <div key={u.id} style={S.adminRow}>
-                    <div style={S.adminRowText}>
-                      <strong style={{ color: "#0d2f6e" }}>{u.nom}</strong> {u.verified && <span style={{ color: "#0ea5e9" }}>✔️ Vérifié</span>}
-                      <p style={{ margin: "2px 0 0", fontSize: 13, color: "#6b7280" }}>{u.whatsapp} · rôle : {u.role || "user"}</p>
-                    </div>
-                    <button style={{ ...S.editBtn, flexShrink: 0 }} onClick={() => toggleVerified(u.id, u.verified)}>{u.verified ? "Retirer vérification" : "Vérifier"}</button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {adminTab === "reviews" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {adminReviews.map(r => (
-                  <div key={r.id} style={S.adminRow}>
-                    <div style={S.adminRowText}>
-                      <strong style={{ color: "#0d2f6e" }}>{r.reviewer_name}</strong> <Stars value={r.rating} />
-                      {r.comment && <p style={{ margin: "2px 0 0", fontSize: 13, color: "#6b7280" }}>{r.comment}</p>}
-                    </div>
-                    <button style={{ ...S.dangerBtn, flexShrink: 0 }} onClick={() => adminDeleteReview(r.id)}>Supprimer</button>
-                  </div>
-                ))}
               </div>
             )}
           </div>
-        )
-      )}
+        )}
+
+        {/* MY LISTINGS */}
+        {page === "my-listings" && (
+          <div style={S.pageWhite}>
+            <div style={S.wrap}>
+              <div style={S.pageHead}>
+                <div>
+                  <h1 style={S.h1}>Mes annonces</h1>
+                  {currentUser && myListings.length > 0 && <p style={S.sub}>{myListings.length} annonce{myListings.length !== 1 ? "s" : ""}</p>}
+                </div>
+                {currentUser && myListings.length > 0 && (
+                  <button className="hov-dim" style={S.btnPrimary} onClick={startNewListing}><Icon name="plus" size={18} />Nouvelle annonce</button>
+                )}
+              </div>
+              {!currentUser
+                ? loginPrompt("Connectez-vous pour voir vos annonces.")
+                : myListings.length === 0
+                ? (
+                  <EmptyState icon="list" text="Vous n'avez pas encore d'annonces.">
+                    <button className="hov-dim" style={S.btnPrimary} onClick={() => nav("post")}>Publier ma première annonce</button>
+                  </EmptyState>
+                )
+                : (
+                  <div style={S.grid}>
+                    {myListings.map(l => (
+                      <ListingCard
+                        key={l.id}
+                        {...cardProps(l)}
+                        footer={
+                          <div style={S.cardActions}>
+                            <button className="hov-soft" style={{ ...S.btnSecondary, flex: 1 }} onClick={() => startEdit(l)}><Icon name="edit" size={18} />Modifier</button>
+                            <button className="hov-soft" style={{ ...S.btnDanger, flex: 1 }} onClick={() => deleteListing(l.id)}><Icon name="trash" size={18} />Supprimer</button>
+                          </div>
+                        }
+                      />
+                    ))}
+                  </div>
+                )}
+            </div>
+          </div>
+        )}
+
+        {/* FAVORITES */}
+        {page === "favorites" && (
+          <div style={S.pageWhite}>
+            <div style={S.wrap}>
+              <div style={S.pageHead}><h1 style={S.h1}>Mes favoris</h1></div>
+              {!currentUser ? (
+                loginPrompt("Connectez-vous pour voir vos favoris.")
+              ) : favoriteListings.length === 0 ? (
+                <EmptyState icon="heart" text="Aucun favori pour le moment.">
+                  <button className="hov-dim" style={S.btnPrimary} onClick={() => nav("listings")}>Parcourir les annonces</button>
+                </EmptyState>
+              ) : (
+                <div style={S.grid}>{favoriteListings.map(l => <ListingCard key={l.id} {...cardProps(l)} />)}</div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* MESSAGES */}
+        {page === "messages" && (
+          <div style={S.pageGrey}>
+            <div style={S.wrapNarrow}>
+              <div style={S.pageHead}><h1 style={S.h1}>Messages</h1></div>
+              {!currentUser ? (
+                loginPrompt("Connectez-vous pour voir vos messages.")
+              ) : conversations.length === 0 ? (
+                <EmptyState icon="message" text="Aucune conversation pour le moment." />
+              ) : (
+                <div style={S.listCard}>
+                  {conversations.map((c, i) => {
+                    const otherName = c.buyer_id === currentUser.id ? c.owner_name : c.buyer_name;
+                    return (
+                      <button key={c.id} className="row-link" onClick={() => nav("chat", c.id)} style={{ ...S.convRow, borderTop: i > 0 ? `1px solid ${C.line}` : "none" }}>
+                        <span style={S.avatar} aria-hidden="true">{initial(otherName)}</span>
+                        <span style={{ flex: 1, minWidth: 0, display: "block" }}>
+                          <strong style={{ display: "block", color: C.ink, fontSize: 16 }}>{otherName}</strong>
+                          <span style={{ display: "block", margin: "2px 0 0", fontSize: 14, color: C.muted }}>À propos de : {c.listing_title}</span>
+                        </span>
+                        <Icon name="chevronRight" size={20} style={{ color: C.muted }} />
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* CHAT */}
+        {page === "chat" && (
+          <div style={S.pageGrey}>
+            <div style={S.wrapChat}>
+              <button className="hov-soft" style={S.backBtn} onClick={() => nav("messages")}><Icon name="arrowLeft" size={18} />Retour aux messages</button>
+              {!currentUser ? (
+                <EmptyState icon="message" text="Connectez-vous pour accéder à vos messages." />
+              ) : (
+                <div style={S.chatCard}>
+                  {activeConversation && (
+                    <div style={S.chatHead}>
+                      <span style={S.avatar} aria-hidden="true">{initial(activeConversation.buyer_id === currentUser.id ? activeConversation.owner_name : activeConversation.buyer_name)}</span>
+                      <div style={{ minWidth: 0 }}>
+                        <p style={{ ...S.ownerName, ...S.ellipsis }}>{activeConversation.buyer_id === currentUser.id ? activeConversation.owner_name : activeConversation.buyer_name}</p>
+                        <a href={routeHash("detail", activeConversation.listing_id)} onClick={linkTo("detail", activeConversation.listing_id)} className="hov-link" style={{ display: "block", fontSize: 14, color: C.muted, textDecoration: "none", ...S.ellipsis }}>
+                          {activeConversation.listing_title}
+                        </a>
+                      </div>
+                    </div>
+                  )}
+                  <div ref={chatScrollRef} style={S.chatMessages}>
+                    {messages.length === 0 && <p style={{ margin: "auto", textAlign: "center", color: C.muted, fontSize: 15 }}>Aucun message. Dites bonjour 👋</p>}
+                    {messages.map(m => (
+                      <div key={m.id} style={{ ...S.bubble, ...(m.sender_id === currentUser.id ? S.bubbleMine : S.bubbleTheirs) }}>
+                        <span>{m.content}</span>
+                        {m.created_at && <span style={S.bubbleTime} aria-hidden="true">{formatTime(m.created_at)}</span>}
+                      </div>
+                    ))}
+                  </div>
+                  <form onSubmit={sendMessage} style={S.chatForm}>
+                    <label htmlFor="chat-input" className="sr-only">Votre message</label>
+                    <input id="chat-input" className="field" style={{ ...S.field, flex: 1, minWidth: 0, borderRadius: 999, paddingLeft: 18 }} autoComplete="off" placeholder="Écrire un message..." value={messageInput} onChange={e => setMessageInput(e.target.value)} />
+                    <button type="submit" className="hov-dim" style={{ ...S.btnPrimary, minHeight: 48, borderRadius: 999, padding: "0 18px", flexShrink: 0 }}><Icon name="send" size={18} />Envoyer</button>
+                  </form>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ADMIN */}
+        {page === "admin" && (
+          <div style={S.pageGrey}>
+            <div style={S.wrap}>
+              {!isAdmin ? (
+                <EmptyState icon="shield" text="Accès réservé aux administrateurs." />
+              ) : (
+                <>
+                  <div style={S.pageHead}><h1 style={S.h1}>Panneau d'administration</h1></div>
+                  <div style={S.segmented}>
+                    {[["listings", `Annonces (${listings.length})`], ["users", `Utilisateurs (${adminUsers.length})`], ["reviews", `Avis (${adminReviews.length})`]].map(([tab, label]) => (
+                      <button key={tab} aria-pressed={adminTab === tab} style={{ ...S.segBtn, ...(adminTab === tab ? S.segBtnActive : {}) }} onClick={() => setAdminTab(tab)}>{label}</button>
+                    ))}
+                  </div>
+
+                  <div style={S.listCard}>
+                    {adminTab === "listings" && listings.map((l, i) => (
+                      <div key={l.id} style={{ ...S.adminRow, borderTop: i > 0 ? `1px solid ${C.line}` : "none" }} data-testid="admin-row">
+                        {listingPhotos(l)[0] ? <img src={listingPhotos(l)[0]} alt="" loading="lazy" style={S.adminThumb} /> : <span style={{ ...S.adminThumb, display: "flex", alignItems: "center", justifyContent: "center", color: "#9aa6bd" }}><Icon name="home" size={20} /></span>}
+                        <div style={S.adminRowText}>
+                          <strong style={{ color: C.navy }}>{l.titre}</strong>
+                          <p style={S.meta}>{l.ville} · {l.owner_name} · {l.views || 0} vues</p>
+                        </div>
+                        <div style={S.adminRowActions}>
+                          <button className="hov-soft" style={{ ...S.btnSecondary, ...S.btnSm }} onClick={() => nav("detail", l.id)}>Voir</button>
+                          <button className="hov-soft" style={{ ...S.btnDanger, ...S.btnSm }} onClick={() => deleteListing(l.id)}>Supprimer</button>
+                        </div>
+                      </div>
+                    ))}
+
+                    {adminTab === "users" && adminUsers.map((u, i) => (
+                      <div key={u.id} style={{ ...S.adminRow, borderTop: i > 0 ? `1px solid ${C.line}` : "none" }} data-testid="admin-row">
+                        <span style={S.avatar} aria-hidden="true">{initial(u.nom)}</span>
+                        <div style={S.adminRowText}>
+                          <strong style={{ color: C.navy }}>{u.nom}</strong>
+                          {u.verified && <span style={S.verifiedPill} data-testid="verified-badge"><Icon name="verified" size={14} />Vérifié</span>}
+                          <p style={S.meta}>{u.whatsapp} · rôle : {u.role || "user"}</p>
+                        </div>
+                        <button className="hov-soft" style={{ ...(u.verified ? S.btnSecondary : S.btnNavy), ...S.btnSm, flexShrink: 0 }} onClick={() => toggleVerified(u.id, u.verified)}>{u.verified ? "Retirer vérification" : "Vérifier"}</button>
+                      </div>
+                    ))}
+
+                    {adminTab === "reviews" && adminReviews.map((r, i) => (
+                      <div key={r.id} style={{ ...S.adminRow, borderTop: i > 0 ? `1px solid ${C.line}` : "none" }} data-testid="admin-row">
+                        <div style={S.adminRowText}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                            <strong style={{ color: C.navy }}>{r.reviewer_name}</strong> <Stars value={r.rating} />
+                          </div>
+                          {r.comment && <p style={S.meta}>{r.comment}</p>}
+                        </div>
+                        <button className="hov-soft" style={{ ...S.btnDanger, ...S.btnSm, flexShrink: 0 }} onClick={() => adminDeleteReview(r.id)}>Supprimer</button>
+                      </div>
+                    ))}
+
+                    {((adminTab === "listings" && listings.length === 0) || (adminTab === "users" && adminUsers.length === 0) || (adminTab === "reviews" && adminReviews.length === 0)) && (
+                      <p style={{ margin: 0, padding: 20, color: C.muted, textAlign: "center" }}>Rien à afficher.</p>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+      </main>
+
+      {/* FOOTER (every page) */}
+      <footer style={S.footer}>
+        <div style={S.footerInner}>
+          <div>
+            <a href="#/" onClick={linkTo("home")} style={{ ...S.logo, fontSize: 20 }}>Immo<span style={S.logoSpan}>Congo</span></a>
+            <p style={{ margin: "10px 0 0", maxWidth: 340, lineHeight: 1.55 }}>Maisons et appartements à louer à Fungurume, Kolwezi, Lubumbashi et environs.</p>
+          </div>
+          <div>
+            <p style={S.footerTitle}>Contact WhatsApp</p>
+            <a href={`https://wa.me/${CONTACT_WHATSAPP}`} target="_blank" rel="noreferrer" className="hov-soft" style={{ ...S.btnSecondary, color: C.green, border: "1px solid #bbf7d0" }}>
+              <Icon name="whatsapp" size={20} />+264 816 032 560
+            </a>
+          </div>
+          <div>
+            <p style={S.footerTitle}>Liens</p>
+            <button className="hov-link" style={S.footerLink} onClick={() => nav("listings")}>Toutes les annonces</button>
+            <button className="hov-link" style={S.footerLink} onClick={() => currentUser ? startNewListing() : (setAuthMode("register"), nav("auth"))}>Publier une annonce</button>
+          </div>
+        </div>
+        <div style={S.footerBottom}>
+          <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "8px 24px", paddingTop: 16, borderTop: `1px solid ${C.line}` }}>
+            <p style={{ margin: 0 }}>© 2026 ImmoCongo – Fungurume, Katanga, RDC</p>
+            {fx && (
+              <p style={{ margin: 0 }} data-testid="footer-rate">
+                {rateNote} Taux : <a href="https://www.exchangerate-api.com" target="_blank" rel="noreferrer" style={{ color: C.muted }}>Rates By Exchange Rate API</a>
+              </p>
+            )}
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }
 
-function ListingCard({ listing, onClick, S, isFav, onToggleFav }) {
+function ListingCard({ listing, S, href, onOpen, isFav, onToggleFav, verified, price, footer }) {
   const photos = listingPhotos(listing);
   const mainPhoto = photos[0];
+  const rooms = Number(listing.chambres) || 0;
   return (
-    <div style={S.card} className="listing-card">
-      <div style={{ position: "relative" }} onClick={onClick}>
-        {mainPhoto ? <img src={mainPhoto} alt={listing.titre} style={S.cardImg} loading="lazy" /> : <div style={S.cardImgPlaceholder}>🏠</div>}
-        {photos.length > 1 && <div style={S.photoCountBadge}>📷 {photos.length}</div>}
-        {onToggleFav && (
-          <button
-            onClick={e => { e.stopPropagation(); onToggleFav(); }}
-            style={{ ...S.heartBtn, ...(isFav ? S.heartBtnActive : {}) }}
-            aria-label="Ajouter aux favoris"
-          >
-            {isFav ? "♥" : "♡"}
-          </button>
-        )}
-      </div>
-      <div style={S.cardBody} onClick={onClick}>
-        <h3 style={S.cardTitle}>{listing.titre}</h3>
-        <p style={S.cardMeta}>📍 {listing.ville}</p>
-        {listing.chambres > 0 && <p style={S.cardMeta}>🛏️ {listing.chambres} chambre{listing.chambres > 1 ? "s" : ""}</p>}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
-          <span style={S.price}>{Number(listing.prix).toLocaleString()} <span style={{ fontSize: 12, fontWeight: 400, color: "#6b7280" }}>{listing.devise}/mois</span></span>
-          <span style={{ ...S.badge, ...(listing.disponible ? S.badgeGreen : S.badgeRed) }}>{listing.disponible ? "Disponible" : "Occupée"}</span>
+    <article style={S.card} className="listing-card" data-testid="listing-card">
+      <a href={href} onClick={onOpen} style={S.cardLink}>
+        <div className="card-photo" style={S.cardPhoto}>
+          {mainPhoto
+            ? <img src={mainPhoto} alt={listing.titre} style={S.cardImg} loading="lazy" decoding="async" />
+            : <div style={S.cardPlaceholder}><Icon name="home" size={44} strokeWidth={1.5} /></div>}
+          <span style={S.statusPill}>
+            <span style={{ ...S.dot, background: listing.disponible ? C.greenBright : "#ef4444" }} />
+            {listing.disponible ? "Disponible" : "Occupée"}
+          </span>
+          {photos.length > 1 && (
+            <span style={S.photoCount} data-testid="photo-count" aria-label={`${photos.length} photos`}>
+              <Icon name="camera" size={14} />{photos.length}
+            </span>
+          )}
         </div>
-      </div>
-    </div>
+        <div style={S.cardBody}>
+          <p style={S.cardPrice}>
+            <span data-testid="price" key={price.devise} className="price-fade">{price.text}<span style={S.priceUnit}>/mois</span></span>
+          </p>
+          <h3 style={S.cardTitle}>{listing.titre}</h3>
+          <p style={S.cardMeta}>
+            <Icon name="pin" size={16} />
+            <span style={S.ellipsis}>{listing.ville}{listing.localisation ? ` · ${listing.localisation}` : ""}</span>
+          </p>
+          {(rooms > 0 || verified) && (
+            <div style={S.cardFacts}>
+              {rooms > 0 && <span style={S.fact}><Icon name="bed" size={17} />{rooms} chambre{rooms > 1 ? "s" : ""}</span>}
+              {verified && <span style={S.verifiedSmall} data-testid="verified-badge"><Icon name="verified" size={16} />Vérifié</span>}
+            </div>
+          )}
+        </div>
+      </a>
+      {onToggleFav && (
+        <button
+          onClick={onToggleFav}
+          style={S.heartBtn}
+          aria-label={isFav ? "Retirer des favoris" : "Ajouter aux favoris"}
+          aria-pressed={isFav}
+          data-testid="card-fav"
+        >
+          <Icon
+            name="heart"
+            size={28}
+            strokeWidth={2}
+            fill={isFav ? "#e11d48" : "rgba(10, 31, 71, 0.35)"}
+            style={{ filter: "drop-shadow(0 1px 2px rgba(0, 0, 0, 0.3))" }}
+          />
+        </button>
+      )}
+      {footer}
+    </article>
   );
 }
 
 function SkeletonCard({ S }) {
   return (
-    <div style={S.card}>
-      <div style={S.skeletonImg} />
-      <div style={{ padding: 16 }}>
-        <div style={{ ...S.skeletonLine, width: "70%" }} />
-        <div style={{ ...S.skeletonLine, width: "40%" }} />
-        <div style={{ ...S.skeletonLine, width: "50%" }} />
-      </div>
+    <div style={S.card} aria-hidden="true">
+      <div className="skeleton" style={S.skeletonPhoto} />
+      <div className="skeleton" style={{ ...S.skeletonLine, width: "40%", height: 16, marginTop: 14 }} />
+      <div className="skeleton" style={{ ...S.skeletonLine, width: "75%" }} />
+      <div className="skeleton" style={{ ...S.skeletonLine, width: "55%" }} />
     </div>
   );
 }
 
-function Stars({ value }) {
+// Swipe from photo to photo on phones; arrows and thumbnails on computers.
+function Gallery({ photos, title, active, onChange, isMobile, S }) {
+  const trackRef = useRef(null);
+  const count = photos.length;
+
+  function goTo(i) {
+    const track = trackRef.current;
+    if (!track) return;
+    const index = Math.max(0, Math.min(count - 1, i));
+    track.scrollTo({ left: index * track.clientWidth, behavior: "smooth" });
+    onChange(index);
+  }
+
+  function onScroll(e) {
+    const track = e.currentTarget;
+    const index = Math.round(track.scrollLeft / Math.max(1, track.clientWidth));
+    if (index !== active && index >= 0 && index < count) onChange(index);
+  }
+
+  if (count === 0) {
+    return (
+      <div style={{ ...S.galleryWrap, ...S.gallerySlide }}>
+        <div style={S.cardPlaceholder}><Icon name="home" size={72} strokeWidth={1.3} /></div>
+      </div>
+    );
+  }
+
+  return (
+    <div data-testid="gallery">
+      <div style={S.galleryWrap}>
+        <div
+          ref={trackRef}
+          className="gallery-track"
+          onScroll={onScroll}
+          tabIndex={count > 1 ? 0 : undefined}
+          role={count > 1 ? "region" : undefined}
+          aria-label={count > 1 ? "Photos de l'annonce (glissez pour voir la suite)" : undefined}
+          data-testid="gallery-track"
+        >
+          {photos.map((src, i) => (
+            <div key={i} style={S.gallerySlide}>
+              <img
+                src={src}
+                alt={count > 1 ? `${title} – photo ${i + 1} sur ${count}` : title}
+                loading={i === 0 ? "eager" : "lazy"}
+                decoding="async"
+                fetchPriority={i === 0 ? "high" : undefined}
+                style={S.galleryImg}
+                data-testid="gallery-photo"
+              />
+            </div>
+          ))}
+        </div>
+        {count > 1 && (
+          <>
+            <span style={S.galleryCounter} data-testid="gallery-counter">{active + 1} / {count}</span>
+            {isMobile ? (
+              <div style={S.dots} aria-hidden="true">
+                {photos.map((_, i) => <span key={i} style={{ width: 7, height: 7, borderRadius: "50%", background: i === active ? "#fff" : "rgba(255, 255, 255, 0.55)" }} />)}
+              </div>
+            ) : (
+              <>
+                {active > 0 && <button type="button" className="hov-dim" aria-label="Photo précédente" onClick={() => goTo(active - 1)} style={{ ...S.galleryArrow, left: 16 }}><Icon name="chevronLeft" size={22} /></button>}
+                {active < count - 1 && <button type="button" className="hov-dim" aria-label="Photo suivante" onClick={() => goTo(active + 1)} style={{ ...S.galleryArrow, right: 16 }}><Icon name="chevronRight" size={22} /></button>}
+              </>
+            )}
+          </>
+        )}
+      </div>
+      {count > 1 && !isMobile && (
+        <div style={S.thumbs}>
+          {photos.map((src, i) => (
+            <button
+              key={i}
+              type="button"
+              aria-label={`Voir la photo ${i + 1}`}
+              aria-current={i === active ? "true" : undefined}
+              onClick={() => goTo(i)}
+              data-testid="gallery-thumb"
+              style={{ ...S.thumb, border: i === active ? `3px solid ${C.navy}` : "3px solid transparent", opacity: i === active ? 1 : 0.75 }}
+            >
+              <img src={src} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EmptyState({ icon, text, children }) {
+  return (
+    <div style={{ textAlign: "center", padding: "56px 16px", color: C.muted }}>
+      <div style={{ width: 64, height: 64, borderRadius: "50%", background: "#e9edf3", color: C.navy, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+        <Icon name={icon} size={28} />
+      </div>
+      <p style={{ margin: children ? "0 0 20px" : 0, fontSize: 16, color: C.ink }}>{text}</p>
+      {children}
+    </div>
+  );
+}
+
+function Stars({ value, size = 16 }) {
   const rounded = Math.round(value);
   return (
-    <span style={{ color: "#f59e0b", fontSize: 14 }}>
-      {"★".repeat(rounded)}{"☆".repeat(Math.max(0, 5 - rounded))}
+    <span style={{ display: "inline-flex", gap: 1, color: C.amber, verticalAlign: "middle" }} aria-label={`${rounded} sur 5`} role="img">
+      {[1, 2, 3, 4, 5].map(n => <Icon key={n} name="star" size={size} strokeWidth={1.6} fill={n <= rounded ? C.amber : "none"} style={{ color: n <= rounded ? C.amber : "#c5cbd6" }} />)}
     </span>
   );
 }
 
-function InfoPill({ icon, label, value }) {
+function InfoItem({ S, icon, label, value }) {
   return (
-    <div style={{ background: "#f7f6f2", borderRadius: 8, padding: "10px 14px", minWidth: 0 }}>
-      <p style={{ margin: 0, fontSize: 12, color: "#6b7280" }}>{icon} {label}</p>
-      <p style={{ margin: "2px 0 0", fontSize: 14, fontWeight: 600, color: "#1a1a1a" }}>{value}</p>
+    <div style={S.infoItem}>
+      <span style={S.infoIcon}><Icon name={icon} size={18} /></span>
+      <div style={{ minWidth: 0 }}>
+        <p style={{ margin: 0, fontSize: 13, color: C.muted }}>{label}</p>
+        <p style={{ margin: "1px 0 0", fontSize: 15, fontWeight: 700, color: C.ink }}>{value}</p>
+      </div>
     </div>
   );
 }

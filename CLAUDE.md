@@ -8,6 +8,8 @@ Rental listing platform for Fungurume (Katanga, DRC), expanding to other Congole
 
 ## Stack
 - React 19 + Vite 8, single-page app. Almost everything is in `src/App.jsx` (inline style object `S`, hash routing via `parseRoute()` / `routeHash()` / `nav()`).
+- Look (design refresh, 2026-10): colours in the `C` object in `App.jsx` (navy `#0d2f6e` text/titles, green `#15803d` main buttons, white + light grey `#f5f7fa`). `src/index.css` holds what inline styles can't do (hover/focus states, animations, the hero drawing `src/assets/hero-katanga.svg`, the swipe gallery). System font stack, no web font. Icons: `src/Icon.jsx` (no emojis in buttons). Breakpoints: `isMobile` ≤640px, `isNarrow` ≤900px.
+- **Never use `window.confirm()` / `alert()` / `prompt()`**: use `await askConfirm({ title, message, confirmLabel, danger })` (renders `src/ConfirmDialog.jsx`). The e2e `page` fixture fails any test where a native dialog opens.
 - Supabase: auth + Postgres. Client is created in `App.jsx` from `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` in `.env`.
 - Netlify auto-deploys every push to `main`. **Pushing to `main` = going live.**
 - Every other branch gets its own preview site at `https://<branch>--immocongo-jandj.netlify.app` (Netlify branch deploys). Previews and the live site share the same Supabase database.
@@ -22,6 +24,11 @@ Rental listing platform for Fungurume (Katanga, DRC), expanding to other Congole
   - Trigger `protect_profile_privileges` (on `profiles`): only an admin (or server-side code with no signed-in user) may set or change `role` / `verified`. Other users get error 42501.
 - `favorites`, `reviews`, `conversations`, `messages` — buyer ↔ owner chat, favourites, star reviews
 - RPC `increment_views(p_id)`; Realtime enabled on `messages`
+- `exchange_rates` (migration `exchange_rates`, 2026-10-12) — base ('USD'), quote (CDF, EUR, ZAR, ZMW), rate (1 base = rate quote), source, source_updated_at, updated_at. Everyone can read it; nobody but the service role can write it.
+  - Filled by the Edge Function `update-exchange-rate` (`supabase/functions/update-exchange-rate`, deployed through the connector with verify_jwt = false). It reads `https://open.er-api.com/v6/latest/USD` (ExchangeRate-API's open endpoint), refuses implausible rates, keeps the last good rate on any failure, and does nothing when the stored rate is less than 20 hours old.
+  - Scheduled in production only with pg_cron + pg_net: jobs `update-exchange-rate` (01:30 UTC) and `update-exchange-rate-retry` (13:30 UTC), see `supabase/one-off/20261012_exchange_rate_schedule.sql`. Never schedule them locally (they call the production URL).
+  - The site must show the source's attribution "Rates By Exchange Rate API" (footer, linked to exchangerate-api.com) wherever converted prices appear. Locally, `supabase/seed.sql` fixes the rates (1 USD = 2 500 CDF = 0.8 EUR = 18 ZAR = 25 ZMW).
+  - In the app: display currency `currency` (saved in localStorage `immocongo.devise`, default USD), `fx` = rates or null. `priceInfo()` gives the shown price; filters and sorting compare converted prices. Without a rate the site shows the owners' prices and hides the currency button.
 - **Trust triggers** (migration `trust_fixes`, live since 2026-10-12). They quietly overwrite what the client sends, never refuse, so old client code keeps working:
   - Names come from `profiles.nom`: `listings.owner_name` (follows `owner_id`, so an admin edit keeps the owner's name), `reviews.reviewer_name`, `conversations.buyer_name` / `owner_name`. No profile → "Utilisateur" (`owner_name` null for a listing without owner). Trigger `sync_profile_name` copies a profile name change to all of that person's rows. `messages` has no name column.
   - `conversations` (trigger `set_conversation_parties`): on insert, `owner_id` and `listing_title` are taken from the listing; a missing listing is refused.

@@ -27,7 +27,7 @@ The best real-estate website, starting in Fungurume and Katanga, then all of DR 
 - [x] **Security: only admins can change a profile's role or verified badge** (trigger `protect_profile_privileges`). (2026-10-12)
 - [x] **Automatic testing, so Junior rarely has to test by hand.** Local copy of Supabase (Supabase CLI + Docker Desktop) with test accounts, and 39 automatic browser and database tests; run with `npm run test:e2e` before every preview. (2026-10-12)
 - [x] **Trust fixes:** names on listings, reviews and conversations come from the author's profile; only `increment_views` changes view counts; conversations only with a listing's real owner; admin can delete other users' photo files; "Mes annonces" asks visitors to log in. (2026-10-12)
-- [ ] **Design refresh** (Junior's choices, 2026-10-12): **clean & airy** style like Airbnb (white background, big photos, rounded cards, lots of space); **keep the navy + green** colours and logo; home page opens with a **big search bar** (town, price, rooms) over a nice photo. Covers the whole site: home, listing cards, listing page, forms, menus, messages, admin. Replace the browser's own pop-ups (`confirm()` / `alert()`, e.g. "Supprimer cette annonce ?" with English OK/Cancel) with a clean French dialog that matches the site.
+- [~] **Design refresh** (Junior's choices, 2026-10-12; preview `design-refresh`, waiting for Junior's yes; after his first feedback: home stats strip removed, prices in the visitor's currency with the day's rate): **clean & airy** style like Airbnb (white background, big photos, rounded cards, lots of space); **keep the navy + green** colours and logo; home page opens with a **big search bar** (town, price, rooms) over a nice photo. Covers the whole site: home, listing cards, listing page, forms, menus, messages, admin. Replace the browser's own pop-ups (`confirm()` / `alert()`, e.g. "Supprimer cette annonce ?" with English OK/Cancel) with a clean French dialog that matches the site.
 - [ ] Update outdated developer packages (`npm audit` reports 6 issues in vite / eslint dependencies; not visible to visitors).
 - [ ] **Browse without an account:** check that a visitor can see every listing and listing page without logging in; ask for login only to favourite, review, message or publish, with a clear French message explaining why.
 - [ ] **Split `src/App.jsx`** (~1,260 lines) into smaller files (pages and components). Needed before several agents can work on the code at the same time.
@@ -62,6 +62,7 @@ Start charging only once there are enough listings and visitors. Prices to decid
 ---
 
 ## Ideas / later
+- 🧑 Home page picture: today it is a light drawing of houses at dusk. If Junior takes a nice photo of Fungurume himself (his own, so we have the rights), Claude can use it instead, shrunk to a WebP under 150 KB.
 - 🧑 Decide what to do with Junior's second login account (no profile): delete it, or give it a profile.
 - 🧑 One live listing shows its owner as "Utilisateur" (that account's profile name is "Utilisateur"). Tell Claude the right name: fixing the profile updates the listing by itself.
 - "Mon profil" page to change one's name and WhatsApp number (the name then follows on listings, reviews and conversations automatically).

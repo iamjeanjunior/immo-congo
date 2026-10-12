@@ -153,11 +153,35 @@ export async function clickNav(page, name) {
   await page.locator("nav").getByRole("button", { name, exact: true }).click();
 }
 
+// A link or button of the header menu (opens the ☰ menu on phones first).
+export async function navButton(page, name) {
+  await openMenu(page);
+  return page.locator("nav").getByRole("button", { name, exact: true });
+}
+
+// The site's own confirmation window (it replaced the browser's confirm()).
+export const confirmDialog = page => page.getByRole("alertdialog");
+
+// Clicks a "Supprimer" button, then answers the site's confirmation window with "Supprimer".
+export async function deleteAndConfirm(page, button) {
+  await button.click();
+  const dialog = confirmDialog(page);
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Supprimer", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+}
+
+// Listings page: on phones the filters are behind the "Filtres" button.
+export async function openFilters(page) {
+  const toggle = page.getByRole("button", { name: /^Filtres/ });
+  if (await toggle.isVisible() && (await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+}
+
 export async function login(page, user) {
   await open(page, "auth");
   await page.getByPlaceholder("votre@email.com").fill(user.email);
   await page.getByPlaceholder("••••••••").fill(user.password || PASSWORD);
-  await page.getByRole("button", { name: "Se connecter" }).click();
+  await page.locator("form").getByRole("button", { name: "Se connecter" }).click();
   await expect(page.getByText("Connexion réussie !")).toBeVisible();
 }
 
@@ -202,5 +226,16 @@ export const test = base.extend({
   context: async ({ context }, use) => {
     await onlyLocalRequests(context);
     await use(context);
+  },
+  // The site must never open the browser's own pop-ups (alert / confirm / prompt): on phones they show
+  // the website address and English buttons. Any test whose page opens one fails.
+  page: async ({ page }, use) => {
+    const nativeDialogs = [];
+    page.on("dialog", dialog => {
+      nativeDialogs.push(`${dialog.type()}: ${dialog.message()}`);
+      dialog.dismiss().catch(() => {});
+    });
+    await use(page);
+    expect(nativeDialogs, "the browser's own pop-up must never open").toEqual([]);
   },
 });
