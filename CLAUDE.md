@@ -17,6 +17,8 @@ Rental listing platform for Fungurume (Katanga, DRC), expanding to other Congole
 - Photos: public Storage bucket `listing-photos`, files under `<owner uid>/` (users can only write their own folder). Shrunk on the device before upload (`src/photos.js`). Old rows could hold base64 data URLs; `listingPhotos()` in `src/photos.js` reads both formats. All existing rows were moved to Storage on 2026-10-12.
 - `listing_photos_backup` — temporary private backup of the old base64 photos (RLS on, no policies). Undo SQL is in `supabase/one-off/20261012_photo_migration.sql`. Drop after 2026-11-09 if all is well.
 - `profiles` — id (= auth user id), nom, whatsapp, role (`user` | `admin`), verified, created_at. A user without a profile row can't publish (foreign key on `listings.owner_id`).
+  - Trigger `on_auth_user_created` (on `auth.users`) creates the profile at signup from `raw_user_meta_data` (nom, whatsapp); role is always `user`. The app then upserts nom/whatsapp, and creates a missing profile before publishing (`ensureProfile`). So the client must use upsert, never a plain insert.
+  - Trigger `protect_profile_privileges` (on `profiles`): only an admin (or server-side code with no signed-in user) may set or change `role` / `verified`. Other users get error 42501.
 - `favorites`, `reviews`, `conversations`, `messages` — see `supabase_migration.sql`
 - RPC `increment_views(p_id)`; Realtime enabled on `messages`
 - All schema changes go in a new file under `supabase/migrations/` (create the folder if missing) AND get applied to the database. Keep `supabase_migration.sql` as the historical baseline.

@@ -22,8 +22,10 @@ The best real-estate website, starting in Fungurume and Katanga, then all of DR 
 ## Phase 1 — Fast, good-looking, works well (now)
 - [x] Phone layout: nothing overlaps on small screens (2026-10-12)
 - [x] **Fast photos:** photos moved out of the database into Supabase Storage (bucket `listing-photos`), shrunk on the phone before upload, only real image files accepted. Listings data went from 15.4 MB to 3 KB. (2026-10-12)
-- [~] **Fix: accounts without a profile can't publish.** They get a vague "Erreur lors de la publication" (the database requires a `profiles` row). Fix: the app creates a missing profile before publishing and shows a clear French message if it still fails; the database creates the profile on signup (trigger `supabase/migrations/20261012_profile_on_signup.sql`, applied right after this goes live). No backfill: Junior decides about his second account. Found while testing on 2026-10-12. Branch `fix-profile-owner`.
-- [~] **Fix: an admin editing someone else's listing becomes its owner.** `handlePost` in `src/App.jsx` sent `owner_id` / `owner_name` on update; it no longer does when editing. Branch `fix-profile-owner`.
+- [x] **Fix: accounts without a profile can't publish.** The app now creates a missing profile before publishing (clear French message if it still fails), and the database creates the profile on signup (trigger `on_auth_user_created`). (2026-10-12)
+- [x] **Fix: an admin editing someone else's listing becomes its owner.** Editing no longer sends `owner_id` / `owner_name`. (2026-10-12)
+- [x] **Security: only admins can change a profile's role or verified badge** (trigger `protect_profile_privileges`). (2026-10-12)
+- [ ] **Automatic testing, so Junior rarely has to test by hand.** A local copy of Supabase on Junior's laptop (Supabase CLI + Docker Desktop) with test accounts, and automatic browser tests (signup, login, publish with photos, edit, delete, admin, messages) that run before every preview. Junior then only looks at visual changes on a phone.
 - [ ] **Browse without an account:** check that a visitor can see every listing and listing page without logging in; ask for login only to favourite, review, message or publish, with a clear French message explaining why.
 - [ ] **Design refresh:** home page, listing cards and listing page look modern and trustworthy (good photos first, clear price, town and neighbourhood, verified owner badge).
 - [ ] **Split `src/App.jsx`** (~1,260 lines) into smaller files (pages and components). Needed before several agents can work on the code at the same time.
