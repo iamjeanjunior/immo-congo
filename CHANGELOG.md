@@ -2,7 +2,7 @@
 
 Newest first. Written for Junior: what changed for visitors and owners.
 
-## 2026-10-12 — Design refresh (preview, waiting for Junior's yes)
+## 2026-10-12 — Design refresh (live)
 - **A new, cleaner look for the whole site**, in the "clean & airy" style Junior chose: white pages, big photos, rounded corners, lots of space. The navy + green colours and the Immo**Congo** logo stay: navy for titles and text, green for the main buttons.
 - **Home page:** it now opens with a big search over a drawing of Katanga houses at dusk. You choose the town, the maximum price and the number of rooms, tap "Rechercher", and you land directly on the matching listings. Below: the latest listings, "Comment ça marche ?" in 3 steps, an invitation for landlords to publish for free, and a footer with the WhatsApp contact (now on every page).
 - The home page drawing is very light (about 3 KB, no photo to download), so it shows fast even on slow connections.
