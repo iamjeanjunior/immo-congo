@@ -1,6 +1,6 @@
 // Phone layout: no page may scroll sideways at 375px (the "elements overlap" problem from before).
 // Runs in the "phone" project only (not tagged @desktop).
-import { test, expect, open, login, openMenu, createUser, createListing, clientAs, expectNoSideScroll, SEED } from "./helpers.js";
+import { test, expect, open, login, openMenu, openFilters, createUser, createListing, clientAs, expectNoSideScroll, confirmDialog, SEED } from "./helpers.js";
 
 const LONG_LINK = "https://www.facebook.com/groups/immobilier.fungurume.kolwezi.lubumbashi/permalink/123456789012345678901234567890";
 
@@ -31,16 +31,20 @@ test("pas de défilement horizontal à 375px sur les pages principales", async (
   }
   await openMenu(page);
   await expectNoSideScroll(page, "visitor menu open");
+  await open(page, "listings");
+  await openFilters(page);
+  await expect(page.getByLabel("Prix max", { exact: true })).toBeVisible();
+  await expectNoSideScroll(page, "listings filters open");
 
   // Logged-in pages.
   await login(page, buyer);
   for (const [route, ready] of [
     ["", "Annonces récentes"],
-    ["listings", "🔍 Filtres"],
+    ["listings", "Maisons et appartements à louer au Katanga"],
     [`listing/${listing.id}`, "Description"],
     ["post", "Photos de la maison (max 6)"],
     ["my-listings", "Vous n'avez pas encore d'annonces."],
-    ["favorites", "♥ Mes favoris"],
+    ["favorites", "Mes favoris"],
     ["messages", `À propos de : ${listing.titre}`],
     [`chat/${conv.id}`, LONG_LINK],
   ]) {
@@ -55,9 +59,24 @@ test("pas de défilement horizontal à 375px sur les pages principales", async (
   // Owner and admin pages.
   await login(page, owner);
   await open(page, "my-listings");
-  await expect(page.getByRole("button", { name: "✏️ Modifier" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Modifier", exact: true })).toBeVisible();
   await expectNoSideScroll(page, "owner #/my-listings");
-  await page.getByRole("button", { name: "✏️ Modifier" }).click();
+
+  // The confirmation window fits on the phone screen.
+  await page.getByRole("button", { name: "Supprimer", exact: true }).click();
+  const dialog = confirmDialog(page);
+  await expect(dialog).toBeVisible();
+  const box = await dialog.boundingBox();
+  expect(box.x, "dialog inside the screen (left)").toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width, "dialog inside the screen (right)").toBeLessThanOrEqual(375);
+  for (const name of ["Annuler", "Supprimer"]) {
+    const button = (await dialog.getByRole("button", { name, exact: true }).boundingBox());
+    expect(button.height, `"${name}" is easy to tap`).toBeGreaterThanOrEqual(44);
+  }
+  await expectNoSideScroll(page, "delete confirmation open");
+  await dialog.getByRole("button", { name: "Annuler" }).click();
+
+  await page.getByRole("button", { name: "Modifier", exact: true }).click();
   await expect(page.locator("form img")).toHaveCount(2);
   await expectNoSideScroll(page, "owner edit form with photos");
 
@@ -67,4 +86,27 @@ test("pas de défilement horizontal à 375px sur les pages principales", async (
     await page.getByRole("button", { name: tab }).click();
     await expectNoSideScroll(page, `admin tab ${tab}`);
   }
+});
+
+test("formulaires : champs en 16 px et boutons faciles à toucher (44 px ou plus)", async ({ page }) => {
+  const user = await createUser();
+  // 16px stops iPhones from zooming in when a field is tapped.
+  await open(page, "auth");
+  for (const field of await page.locator("form input").all()) {
+    expect(await field.evaluate(el => parseFloat(getComputedStyle(el).fontSize))).toBeGreaterThanOrEqual(16);
+  }
+  const submit = await page.locator("form").getByRole("button", { name: "Se connecter" }).boundingBox();
+  expect(submit.height).toBeGreaterThanOrEqual(44);
+
+  await login(page, user);
+  await open(page, "post");
+  const fields = page.locator("form input:not([type=file]), form select, form textarea");
+  expect(await fields.count()).toBeGreaterThanOrEqual(9);
+  for (const field of await fields.all()) {
+    const { size, height } = await field.evaluate(el => ({ size: parseFloat(getComputedStyle(el).fontSize), height: el.getBoundingClientRect().height }));
+    expect(size).toBeGreaterThanOrEqual(16);
+    expect(height).toBeGreaterThanOrEqual(44);
+  }
+  const publish = await page.getByRole("button", { name: "Publier l'annonce" }).boundingBox();
+  expect(publish.height).toBeGreaterThanOrEqual(44);
 });

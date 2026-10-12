@@ -13,15 +13,18 @@ test("favoris : ajouter, voir dans Mes favoris, retirer", async ({ page }) => {
   await login(page, user);
 
   await open(page, `listing/${listing.id}`);
-  await page.getByRole("button", { name: "♡ Ajouter aux favoris" }).click();
-  await expect(page.getByRole("button", { name: "♥ Retirer des favoris" })).toBeVisible();
+  const fav = page.getByTestId("detail-fav");
+  await expect(fav).toHaveText("Ajouter aux favoris");
+  await fav.click();
+  await expect(fav).toHaveText("Retirer des favoris");
+  await expect(fav).toHaveAttribute("aria-pressed", "true");
   await expect.poll(async () => (await db.from("favorites").select("listing_id").eq("user_id", user.id)).data)
     .toEqual([{ listing_id: listing.id }]);
 
   await open(page, "favorites");
   const card = page.locator(".listing-card", { hasText: listing.titre });
   await expect(card).toBeVisible();
-  await card.getByRole("button", { name: "Ajouter aux favoris" }).click(); // the ♥ on the card removes it
+  await card.getByRole("button", { name: "Retirer des favoris" }).click(); // the ♥ on the card's photo removes it
   await expect(page.getByText("Aucun favori pour le moment.")).toBeVisible();
   await expect.poll(async () => (await db.from("favorites").select("id").eq("user_id", user.id)).data).toEqual([]);
 });
@@ -33,7 +36,8 @@ test("avis : laisser une note et un commentaire", async ({ page }) => {
   await open(page, `listing/${listing.id}`);
 
   const form = page.locator("form", { hasText: "Votre note" });
-  await form.getByText("★", { exact: true }).nth(3).click(); // 4 stars
+  await form.getByRole("button", { name: "4 étoiles" }).click();
+  await expect(form.getByRole("button", { name: "4 étoiles" })).toHaveAttribute("aria-pressed", "true");
   const comment = `Très bon accueil, quartier calme. (${user.nom})`;
   await form.getByPlaceholder("Votre commentaire (optionnel)").fill(comment);
   await form.getByRole("button", { name: "Publier mon avis" }).click();
@@ -74,7 +78,7 @@ test("avis et message envoyés juste après l'ouverture de la page : signés ave
     await form.getByRole("button", { name: "Publier mon avis" }).click();
     await expect(page.getByText("Merci pour votre avis !")).toBeVisible();
     await expect(page.getByText(user.nom, { exact: true }), "the review shows the real name").toBeVisible();
-    await page.getByRole("button", { name: "💬 Message au propriétaire" }).click();
+    await page.getByRole("button", { name: "Message au propriétaire" }).click();
     await expect(page).toHaveURL(/#\/chat\/\d+$/);
   } finally {
     releaseProfiles();
@@ -98,7 +102,7 @@ test("messages : un locataire écrit au propriétaire, qui répond (en direct)",
   await login(page, buyer);
   await open(page, `listing/${listing.id}`);
   const buyerLive = waitForLiveChat(page);
-  await page.getByRole("button", { name: "💬 Message au propriétaire" }).click();
+  await page.getByRole("button", { name: "Message au propriétaire" }).click();
   await expect(page).toHaveURL(/#\/chat\/\d+$/);
   await expect(page.getByText("Aucun message. Dites bonjour 👋")).toBeVisible();
   await buyerLive;
@@ -106,6 +110,9 @@ test("messages : un locataire écrit au propriétaire, qui répond (en direct)",
   await page.getByPlaceholder("Écrire un message...").fill(question);
   await page.getByRole("button", { name: "Envoyer" }).click();
   await expect(page.getByText(question)).toBeVisible();
+  // The chat shows who the conversation is with, and the listing.
+  await expect(page.getByText(owner.nom, { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: listing.titre })).toBeVisible();
 
   // Owner, in a second browser, sees the conversation and answers.
   const ownerContext = await browser.newContext();
