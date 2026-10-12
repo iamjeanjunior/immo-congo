@@ -2,6 +2,13 @@
 
 Newest first. Written for Junior: what changed for visitors and owners.
 
+## 2026-10-12 — Automatic tests (for developers, no change for visitors)
+- Nothing changes on the website. This is a tool for Claude, so Junior no longer has to test everything by hand.
+- Junior's laptop now has a private test copy of the website's database (it runs in Docker Desktop). It has the same tables and the same security rules as the real one, but only fake test accounts and fake listings. The real database and real accounts are never used by the tests.
+- One command, `npm run test:e2e`, tests the site by itself in about 1–2 minutes, like a person would, on a phone-size screen and on a computer screen: creating an account, logging in and out, publishing a listing with 2 photos (and checking the photos are made smaller), the listing page with its photos, editing (removing a photo), deleting, an admin editing someone else's listing, an old account without a profile publishing, favourites, reviews, messages between two people (live), the admin "Vérifier" button, refusing a PDF instead of a photo, no page sliding sideways on a phone, what a visitor without an account sees, and the database security rules (for example, nobody can make themselves admin).
+- Result of the first full run: 38 tests passed. 1 test shows a problem we already knew about: when an admin deletes someone else's listing, its photo files stay in the photo store.
+- From now on, Claude runs these tests before every preview link. Junior only needs to look at how things look and feel on his phone.
+
 ## 2026-10-12 — Security: only admins can give the admin role or the verified badge (live)
 - Before, a signed-in user with some technical knowledge could make themselves admin or "verified". Now the database refuses this unless the person asking is an admin. Nobody had used it. The admin "Vérifier" button works as before.
 

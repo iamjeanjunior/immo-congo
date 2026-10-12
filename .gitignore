@@ -23,3 +23,9 @@ dist-ssr
 *.sln
 *.sw?
 .env
+
+# Automatic tests (Playwright) output
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
