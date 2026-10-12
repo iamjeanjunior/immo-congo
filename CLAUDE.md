@@ -22,6 +22,11 @@ Rental listing platform for Fungurume (Katanga, DRC), expanding to other Congole
   - Trigger `protect_profile_privileges` (on `profiles`): only an admin (or server-side code with no signed-in user) may set or change `role` / `verified`. Other users get error 42501.
 - `favorites`, `reviews`, `conversations`, `messages` — buyer ↔ owner chat, favourites, star reviews
 - RPC `increment_views(p_id)`; Realtime enabled on `messages`
+- **Trust triggers** (migration `trust_fixes`, live since 2026-10-12). They quietly overwrite what the client sends, never refuse, so old client code keeps working:
+  - Names come from `profiles.nom`: `listings.owner_name` (follows `owner_id`, so an admin edit keeps the owner's name), `reviews.reviewer_name`, `conversations.buyer_name` / `owner_name`. No profile → "Utilisateur" (`owner_name` null for a listing without owner). Trigger `sync_profile_name` copies a profile name change to all of that person's rows. `messages` has no name column.
+  - `conversations` (trigger `set_conversation_parties`): on insert, `owner_id` and `listing_title` are taken from the listing; a missing listing is refused.
+  - `listings.views` (trigger `protect_listing_views`): requests running as `anon` / `authenticated` keep the old value (0 on insert). Only `increment_views` (SECURITY DEFINER, so inside it `current_user` = postgres) can change it. Keep `protect_listing_views` SECURITY INVOKER, or the check stops working.
+- Storage: admins may also list and delete files in every folder of `listing-photos` (policies `listing_photos_admin_select` / `listing_photos_admin_delete`).
 - The whole schema (tables, policies, functions, triggers, bucket, Realtime) as it was in production on 2026-10-12 is `supabase/migrations/20261012163000_baseline_from_production.sql`, read from production with read-only queries. **Never apply that file to production** (it already has all of it). Older hand-written SQL is kept only as history: `supabase_migration.sql`, `supabase/history/`, `supabase/one-off/` (the CLI never runs those folders).
 
 ## Database changes (migrations)
@@ -29,7 +34,7 @@ Rental listing platform for Fungurume (Katanga, DRC), expanding to other Congole
 2. Write idempotent SQL (`if not exists`, `drop policy if exists`, `create or replace`). Always enable RLS on new tables. Update `supabase/seed.sql` if the test data needs the new columns.
 3. Run it locally first: `npm run test:e2e` resets the local database with every migration + the seed, then runs the tests.
 4. Apply it to production with the Supabase connector: `apply_migration` on project `nnkrofhjhjyyprqhwbjv`, with the same short name and the file's SQL. Production stores its own version number for it; that's fine.
-   Then check both databases still have the same schema: `npm run db:fingerprint` (local) and the same file `scripts/e2e/schema-fingerprint.sql` through the connector's `execute_sql` (production, read-only). Every line must match. On 2026-10-12 all 13 lines matched.
+   Then check both databases still have the same schema: `npm run db:fingerprint` (local) and the same file `scripts/e2e/schema-fingerprint.sql` through the connector's `execute_sql` (production, read-only). Every line must match. On 2026-10-12 all 13 lines matched (again after `trust_fixes`).
 5. Never use `supabase link`, `supabase db push/pull/dump` or anything that needs Junior's database password or tokens. To compare with production, use read-only catalog queries through the connector.
 
 ## Workflow: preview first, live only after Junior says yes
