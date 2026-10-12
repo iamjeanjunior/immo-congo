@@ -59,7 +59,9 @@ const crumbs = `<p><a href="/">${SITE_NAME}</a> › <a href="${PAGE_PATHS.listin
 
 // Everything the page needs: { status, title, description, canonical, noindex, image, imageAlt, imageSize, jsonLd, body }
 // or { redirect } when a listing is opened with an outdated address.
-export function buildSeo(route, rows, pathname) {
+export function buildSeo(route, rawRows, pathname) {
+  // Owners sometimes type a space at the end of a title or description.
+  const rows = rawRows.map(r => ({ ...r, titre: String(r.titre ?? "").trim(), description: String(r.description ?? "").trim() }));
   if (route.page === "detail") {
     const listing = rows[0];
     if (!listing) {

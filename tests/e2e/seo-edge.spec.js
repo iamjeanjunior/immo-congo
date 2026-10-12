@@ -121,14 +121,14 @@ test("aperçu d'une annonce : titre, description, Open Graph, JSON-LD et texte",
 });
 
 test("aperçu : texte dangereux échappé, annonce occupée, sans photo", async () => {
-  const evil = { ...LISTING, titre: 'Villa "luxe" <script>alert(1)</script>', description: "</script><b>x</b>", disponible: false, image_url: null, images: "[]" };
+  const evil = { ...LISTING, titre: 'Villa "luxe" <script>alert(1)</script> ', description: "</script><b>x</b>", disponible: false, image_url: null, images: "[]" };
   const seo = buildSeo({ page: "detail", id: 12 }, [evil], "/annonce/12-villa-luxe-script-alert-1-script-fungurume");
   expect(seo.redirect).toBeUndefined();
   const html = injectSeo(INDEX_HTML, seo);
   expect(html).not.toContain("<script>alert(1)");
   expect(html).not.toContain("<b>x</b>");
   expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
-  expect(jsonLd(html).name).toBe(evil.titre); // JSON-LD stays valid and exact
+  expect(jsonLd(html).name).toBe(evil.titre.trim()); // JSON-LD stays valid and exact (extra spaces trimmed)
   expect(jsonLd(html).offers.availability).toBe("https://schema.org/OutOfStock");
   expect(metas(html, "og:image")).toEqual([`${SITE_URL}/og-image.png`]); // no photo: the site's picture
   expect(metas(html, "description")[0]).toMatch(/^Actuellement occupée\./);
